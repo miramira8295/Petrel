@@ -4,6 +4,7 @@ import { router } from '@kit.ArkUI';
 import { PROFILE_TAB_MEDIA, PROFILE_TAB_MEMBERS } from '../../store/ChatProfileStore';
 import { setMute } from '../../store/ChatActions';
 import { KEY_INFO_WIDTH } from '../../util/layoutModeSettings';
+import { setNumber } from '../../store/AppSettings';
 import { navigateToChatProfile } from '../../util/profileNav';
 import { AVATAR_PALETTE, COLOR_PRIMARY, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY } from '../../util/theme';
 
@@ -15,7 +16,24 @@ import { AVATAR_PALETTE, COLOR_PRIMARY, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY
 @Component
 export struct ProfileInfoColumn {
   @StorageProp('activeChatId') @Watch('reload') private chatId: number = 0;
-  @StorageProp(KEY_INFO_WIDTH) private widthVp: number = 340;
+  @StorageProp(KEY_INFO_WIDTH) @Watch('onConfigWidth') private widthVp: number = 340;
+  @State private liveW: number = 340;
+  @State private dragging: boolean = false;
+  private dragStartW: number = 340;
+
+  private clampW(v: number): number {
+    const screenW: number = AppStorage.get<number>('screenWidthVp') ?? 1317.6;
+    const listW: number = AppStorage.get<number>('navBarWidth') ?? 360;
+    const maxByChat: number = screenW - listW - 2 - 560;
+    const maxW: number = Math.max(300, Math.min(400, maxByChat));
+    return Math.max(300, Math.min(maxW, Math.round(v)));
+  }
+
+  private onConfigWidth(): void {
+    if (!this.dragging) {
+      this.liveW = this.clampW(this.widthVp);
+    }
+  }
   @StorageProp('topSafeHeight') private topSafe: number = 0;
   @State private title: string = '';
   @State private avatarPath: string = '';
@@ -109,8 +127,9 @@ export struct ProfileInfoColumn {
   }
 
   build(): void {
-    Column() {
-      Text('资料')
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        Text('资料')
         .fontSize(16).fontWeight(FontWeight.Medium).fontColor(COLOR_TEXT_PRIMARY)
         .width('100%')
         .padding({ left: 14, top: Math.max(this.topSafe, 26) + 10, bottom: 6 });
@@ -151,10 +170,53 @@ export struct ProfileInfoColumn {
           .fontSize(11).fontColor(COLOR_TEXT_SECONDARY)
           .width('100%').padding({ left: 16, right: 16, bottom: 16 });
       }
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 8 })
+
+      // 与左侧分栏线同规格：1px 线 + 白色药丸（左线实测 1px 线、4x51px 药丸 @2.125）
+      Column()
+        .width(0.5)
+        .height('100%')
+        .backgroundColor('#38000000')
+
+      Row() {
+        Column()
+          .width(this.dragging ? 3 : 2)
+          .height(24)
+          .borderRadius(1.5)
+          .backgroundColor(this.dragging ? '#FFFFFF' : '#F2FFFFFF')
+      }
+      .width(12)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .translate({ x: -6 })
+      .clip(false)
+      .gesture(
+        PanGesture({ direction: PanDirection.Horizontal, distance: 1 })
+          .onActionStart((): void => {
+            this.dragging = true;
+            this.dragStartW = this.liveW;
+          })
+          .onActionUpdate((e: GestureEvent): void => {
+            this.liveW = this.clampW(this.dragStartW - e.offsetX);
+          })
+          .onActionEnd((): void => {
+            this.dragging = false;
+            setNumber(KEY_INFO_WIDTH, this.liveW);
+          })
+          .onActionCancel((): void => {
+            this.dragging = false;
+          })
+      )
     }
-    .width(this.widthVp)
-    .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
-    .border({ width: { left: 0.5 }, color: $r('app.color.divider') });
+    .width(this.liveW)
+    .height('100%');
   }
 }
+
+
+
+
