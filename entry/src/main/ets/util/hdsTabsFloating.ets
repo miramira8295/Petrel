@@ -14,7 +14,7 @@
 // v1.3.6 启动崩溃）。
 
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { HdsTabsAttribute, SystemMaterialParams } from '@kit.UIDesignKit';
+import { HdsBarStyle, HdsTabsAttribute, HdsTabsController, SystemMaterialParams } from '@kit.UIDesignKit';
 import { hdsMaterialLevelIndex, materialOff } from './overlayMaterial';
 import { hdsMaterialEffect } from './hdsMaterialLevel';
 
@@ -23,6 +23,20 @@ export const HDS_FLOATING_API: number = 23;
 
 export function hdsFloatingAvailable(): boolean {
   return deviceInfo.sdkApiVersion >= HDS_FLOATING_API;
+}
+
+
+// 把迷你播放条收起来（HdsBarStyle.COLLAPSE），让页签栏重新铺开。
+//
+// **它是"点那颗球回到四格导航"的唯一正解。** HDS 展开迷你栏时会把页签栏压成一颗
+// 球，四个格的点击区仍叠在球下面——所以点球会随机命中某一格（用户 2026-11-08 报
+// "切不回去"）。HdsTabsController 没有 expand tab bar 的方法，但 applyMiniBarStyle
+// 能反过来把迷你栏收掉，页签栏自然回位。枚举 6.1.0(23) 起才有，所以走版本闸。
+export function collapseMiniBar(controller: HdsTabsController): void {
+  if (!hdsFloatingAvailable()) {
+    return;
+  }
+  controller.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
 }
 
 export interface HdsTabsFloatingOptions {
@@ -70,7 +84,24 @@ export interface HdsTabsFloatingOptions {
   // 底栏当前是否可见（barHeight > 0）。进入会话页收起底栏时一并卸掉 systemMaterialEffect，
   // 避免 HdsTabs 在会话页底下维持常驻系统材质滤镜。
   barVisible?: boolean;
-}
+  // 迷你栏/页签栏形态变化回调（HdsTabs 的 onBarStyleChange）。
+  //
+  // 它是"迷你播放条现在是不是展开着"的唯一可信来源——控制器没有 expand 的公开
+  // 方法，形态完全由 HDS 内部按点击驱动，只能从这里回读。参数与 SDK 的
+  // BarStyleChangeCallback 一致：(miniBarStyle, tabBarStyle, miniBarWidth,
+  // tabBarWidth, mode)，前两个是 HdsBarStyle 的数值（0 = COLLAPSE，1 = EXPAND）。
+  // 用 number 而不是枚举：枚举 6.1.0(23) 起才有，低版本加载会抛（见文件头）。
+  onBarStyleChange?: (
+    miniBarStyle: number, tabBarStyle: number,
+    miniBarWidth: number, tabBarWidth: number, mode: number
+  ) => void;
+  // 迷你栏展开/收起**动画结束**时的回调（HdsTabs 的 onMiniBarAnimationEnd）。
+  //
+  // 与上面那个「形态一变就报」的回调不同：这个只在动画停下来以后来一次，所以
+  // 可以放心地拿它决定「点球展开」的透明热区什么时候挂上——否则同一个手势会先
+  // 把迷你栏展开、又被刚挂上的热区立刻收回去（真机实测过，用户看到的就是
+  // 「点了没反应」）。
+  onMiniBarAnimationEnd?: (style: number) => void;}
 
 export class HdsTabsFloatingModifier implements AttributeModifier<HdsTabsAttribute> {
   private readonly options: HdsTabsFloatingOptions;
@@ -117,7 +148,11 @@ export class HdsTabsFloatingModifier implements AttributeModifier<HdsTabsAttribu
       gradientMask: { maskColor: this.options.gradientMaskColor },
       adaptToHandedness: this.options.adaptToHandedness,
       systemMaterialEffect: effect,
-      miniBar: { miniBarBuilder: mini }
+      miniBar: {
+        miniBarBuilder: mini,
+        onBarStyleChange: this.options.onBarStyleChange,
+        onMiniBarAnimationEnd: this.options.onMiniBarAnimationEnd
+      }
     });
   }
 }

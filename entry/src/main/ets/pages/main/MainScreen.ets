@@ -14,6 +14,9 @@ import { KEY_LAYOUT_MODE } from '../../util/layoutModeSettings';
 import { navigateToSetting } from '../../util/settingsNav';
 import { ProfileOverlayCard } from '../chatlist/ProfileOverlayCard';
 import { closeProfileOverlay, KEY_PROFILE_OVERLAY_OPEN } from '../../util/profileOverlay';
+import { KEY_CHAT_VIEWER_COVERS_WINDOW } from '../../util/viewerWindowCover';
+import { KEY_LEFT_PANE_MODE, LEFT_PANE_CHATS, LEFT_PANE_PROFILE } from '../../util/leftPaneState';
+import { reconcile, requestTab } from '../../util/navState';
 import { appWallpaperActive, KEY_SPLIT_UNIFIED_BG } from '../../util/localWallpaper';
 import { DOCK_MODE_LEFT_FLOATING } from '../../util/splitMetrics';
 
@@ -39,7 +42,7 @@ import { KEY_POWER_SMOOTH_TRANSITIONS, powerAnimationDuration } from '../../stor
 import { OneShotFrameCallback } from '../../util/oneShotFrameCallback';
 import { updateChecker, STORAGE_UPDATE_AVAILABLE } from '../../services/UpdateChecker';
 import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
-import { HdsTabsFloatingModifier } from '../../util/hdsTabsFloating';
+import { collapseMiniBar, HdsTabsFloatingModifier } from '../../util/hdsTabsFloating';
 import { logicalTabIndex, physicalTabIndex } from '../../util/mainTabIndex';
 import { dockMiniBarLayer } from './DockMiniBar';
 import { SplitPlaceholderHolder } from '../../util/splitPlaceholderHolder';
@@ -128,6 +131,11 @@ export struct MainScreen {
   @StorageProp(KEY_PROFILE_OVERLAY_OPEN) profileOverlayOpen: boolean = false;
   // P1：布局模式变化也要重发 resolvedLayout（auto 的手动切换不伴随窗口变化）。
   @StorageProp(KEY_LAYOUT_MODE) @Watch('syncResolvedLayout') private layoutModeValue: string = 'auto';
+  // 左栏钻取态（04:205/206 定的）：'chats' 是常态，'archive' / 'profile'
+  // 表示会话列表那一栏此刻换成了归档或自己的资料，中栏聊天不动。手机（单栏）
+  // 永远不会进这个态——openLeftPane 自己会拒。写这一格的唯一入口是
+  // util/navState；本组件只读它画胶囊高亮，并在 @Watch 里调 reconcile() 收口。
+  @StorageProp(KEY_LEFT_PANE_MODE) @Watch('onLeftPaneChanged') private leftPaneModeValue: string = LEFT_PANE_CHATS;
   // 聊天页签分栏时左栏的实际宽度（vp，0 = 还没量到）。由 ChatListPage 在自己的
   // 布局回调里写入——HdsNavigation 不回调宽度，拖分割线又会改它，只能这么拿。
   @StorageProp(NAV_BAR_WIDTH_KEY) @Watch('syncResolvedLayout') private navBarWidth: number = 0;
@@ -138,6 +146,9 @@ export struct MainScreen {
   // 此时 ChatPage 仍在做 ~600ms 的退场滑出动画（onWillHide -> onHidden）。
   // 在此期间保持底栏隐藏，等 ChatPage 真正退场消失（onHidden / aboutToDisappear）后再放行底栏。
   @StorageProp('chatDetailHiding') @Watch('syncDock') private chatDetailHiding: boolean = false;
+  // 会话页的媒体查看器此刻是否盖满窗口（分栏下看图片/放视频全屏）。
+  // 由 ChatPage 发布，见 util/viewerWindowCover；dockVisible 据此把页签栏收起来。
+  @StorageProp(KEY_CHAT_VIEWER_COVERS_WINDOW) @Watch('syncDock') private chatViewerCoversWindow: boolean = false;
   // 设置页签分栏时左栏的实际宽度（vp，0 = 还没量到）。与聊天页签分开存：两个
   // 页签各自 enableDragBar(true)，拖过之后两边不再相等。见
   // SETTINGS_NAV_BAR_WIDTH_KEY。
@@ -184,11 +195,21 @@ export struct MainScreen {
   @StorageProp(STORAGE_UPDATE_AVAILABLE) updateAvailable: boolean = false;
   // 回前台补偿：后台期间的来电 push 可能被系统拒绝，前台一刻重查一次。
   @StorageProp('appIsForeground') @Watch('onAppForegroundChanged') appIsForeground: boolean = true;
-  // 镜像到 AppStorage：Index.onBackPress 的三级递退（先回聊天页签，再回
-  // "所有"文件夹，最后二次确认退出）要读它、也要写它。外部写入由 @Watch
-  // 落到 TabsController 上。
-  @StorageLink('mainTabIndex') @Watch('onTabExternallyChanged') tab: number = 0;
-  private appliedTab: number = 0;
+  // 页签下标是导航状态的一部分，**这里只读**。唯一写入口是 util/navState：
+  // 本组件只在 select() / .onChange 里把"用户点了哪一格"交给 requestTab()，
+  // 外部写入（Index.onBackPress 的递退、profileNav / settingsNav / chatNav 的
+  // 跳转、冷启动恢复）由 @Watch 送进 reconcile() 收口。
+  //
+  // 为什么从 @StorageLink 改成 @StorageProp（2026-11-08 用户要求"做减法"）：
+  // 双向绑定等于给每个写入点发了一张"可以自己写状态"的许可证，上一轮才会
+  // 长出 redirectProfileTabToPane() 和 appliedTab 影子状态来互相打补丁。
+  // 单向只读之后，"谁能改页签"在类型层面只剩 navState 一个答案。
+  @StorageProp('mainTabIndex') @Watch('onTabExternallyChanged') tab: number = 0;
+  // 迷你播放条是不是展开着（HDS 把页签栏压成一颗球的时候）。点那颗球只做一件事：
+  // 把它收回去，让四格导航重新铺开——不能再让点击落到叠在球底下的某一格上。
+  @State private miniBarExpanded: boolean = false;
+  // 迷你栏动画已经停稳、且处于展开态 —— 只有这时才挂「点球展开」的透明热区。
+  @State private miniBarSettled: boolean = false;
   @State unread: number = 0;
   @State myId: number = 0;
   @State meAvatar: string = '';
@@ -205,8 +226,9 @@ export struct MainScreen {
   private pressY: number = 0;
   // **HdsTabs 的控制器没有 changeIndex**（只有 applyHide/ShowAnimation、
   // applyMiniBarStyle、bind/unbindScroller 四个，且那三个动画类的都是 6.1.0(23)）。
-  // 切页签因此完全靠 `index: this.tab` 这条状态绑定驱动——原来那两处
-  // changeIndex 是和 `this.tab = index` 成对写的，本来就是双保险。
+  // 切页签因此完全靠 `index: physicalTabIndex(this.tab, ...)` 这条状态绑定驱动
+  // （tab 现在由 navState 写进 AppStorage）——原来那两处 changeIndex 是和
+  // `this.tab = index` 成对写的，本来就是双保险。
   // 类本身是 6.0.0(20)，构造安全。
   private controller: HdsTabsController = new HdsTabsController();
   private railController: HdsTabsController = new HdsTabsController();
@@ -252,6 +274,10 @@ export struct MainScreen {
   // 列表宽任一变化都要重发，否则页面读到的是上一轮的值。
   private syncResolvedLayout(): void {
     publishLayoutState(currentDeviceClass(), this.screenW, this.screenH, this.navBarWidth);
+    // 布局变了，合法组合也跟着变（平板转竖屏、拉窄窗口、开强制单栏、拖分割线
+    // 都可能把 split 翻面）。这里自愈一次：单栏收掉左栏、分栏把残留的 tab === 3
+    // 投回左栏资料。幂等，见 util/navState 的 I1–I3。
+    reconcile();
   }
 
   aboutToAppear(): void {
@@ -273,18 +299,20 @@ export struct MainScreen {
         this.playerExpanded = false;
       }
     });
-    // **先让 Tabs 与 mainTabIndex 对齐。**
+    // **先让页签 / 左栏与 AppStorage 里的导航状态对齐。**
     //
     // 本组件不是只在冷启动时建一次：账号切换（含"添加账号"和取消添加返回原
-    // 账号）会 bumpSessionEpoch() 把整棵树重建，而 mainTabIndex 存在 AppStorage
-    // 里、跨重建存活。于是 this.tab 恢复成 2（设置），Tabs 却从 0 开始——
-    // 屏幕上是聊天列表，dock 高亮的却是"设置"。更糟的是点"设置"也没反应：
-    // select() 看见 index === this.tab 就早退了。用户报的正是这一串（issue #119）。
+    // 账号）会 bumpSessionEpoch() 把整棵树重建，而 mainTabIndex / leftPaneMode
+    // 存在 AppStorage 里、跨重建存活。issue #119 那串"屏幕上是聊天列表、dock
+    // 高亮的却是设置"就是重建时 Tabs 从 0 起、状态还停在 2 造成的。
+    //
+    // 上一轮的做法是记一个 appliedTab 当去重基准；现在 Tabs 的 index 直接从
+    // this.tab 现算（build 里 physicalTabIndex(this.tab)），不会再从 0 起。
+    // 真正需要补的是"恢复出来的组合可能在另一种布局下非法"这一层（平板上残留
+    // tab === 3、单栏里残留 pane === 'profile'），统一交给 navState.reconcile()。
     //
     // @Watch 救不了：ArkUI 的 @Watch 不在初始化时触发，只在此后的变化上触发。
-    // 所以对齐必须在这里显式做一次。appliedTab 一并跟上，否则 select() 的
-    // 去重基准从一开始就是错的。
-    this.appliedTab = this.tab;
+    // 本函数开头（syncResolvedLayout）和末尾各收口一次，两次都幂等。
     // 这棵树不只冷启动建一次：从整页 router 页（应用内浏览器、小程序）返回时
     // 也会重建。重建后各页签的 navBar 标志要等它们再次上报才更新，中间这段时间
     // dock 只能按旧值渲染——用户报的"看过网页回来 dock 没了"就是这个窗口。
@@ -352,6 +380,10 @@ export struct MainScreen {
     }).catch((e: TdError) => {
       logE(`MainScreen.getMe failed: ${e.message}`);
     });
+    // 收口：初始化的这段时间里布局键可能已经被上面的订阅 / 窗口回调改过
+    //（尺寸、强制单栏、账号重建后的 leftPaneMode）。末尾再投影一次，保证
+    // 第一帧就是合法组合；开头那次已经收过，两次都幂等。
+    reconcile();
   }
 
   aboutToDisappear(): void {
@@ -382,27 +414,65 @@ export struct MainScreen {
   }
 
   private select(index: number): void {
-    if (index === this.tab) {
-      // 点已经选中的页签：交给那一页自己处理（聊天页是回顶 / 跳下一个未读，
-      // issue #35）。这里只发信号，不知道也不该知道对方怎么响应。
+    // 点同一格只发信号（聊天页回顶 / 跳下一个未读，issue #35）。但左栏资料面板
+    // 挡着中栏时，"聊天"格虽然是当前页签，用户的真实意图却是收起面板——旧
+    // select 里那条 closeLeftPane 分支就是它。判据必须一并看 pane：面板展开时
+    // tab 仍是 0（navState 的 I1），只看下标这一格会变成"点了没反应"。
+    if (index === this.tab && this.leftPaneModeValue === LEFT_PANE_CHATS) {
       publishTabReTap(index);
       return;
     }
-    this.appliedTab = index;
+    // 分栏下第 4 格不是页签，而是左栏资料：requestTab(3) 投影成
+    // (tab 0, pane 'profile')，且幂等——已经在看资料时再点不改变任何键
+    //（用户 2026-11-08 实报的"连点两下来回跳"，就是两次投影不幂等造成的）。
+    // 单栏下投影成第 4 个整页，手机端行为与改动前一致。
+    // 动画包在这一层：页签切换的观感由 animateTo 决定，navState 只管值。
     animateTo({
       duration: powerAnimationDuration(KEY_POWER_SMOOTH_TRANSITIONS, DOCK_SWITCH_DURATION),
       curve: Curve.EaseOut
-    }, (): void => { this.tab = index; });
+    }, (): void => { requestTab(index); });
   }
 
-  // AppStorage 侧被外部改写（返回键递退）时，把 Tabs 真正切过去。自己内部
-  // 的写入先记 appliedTab，这里就不会重复 changeIndex。
+  // AppStorage 侧的页签被外部改写（Index.onBackPress 的递退、profileNav /
+  // settingsNav / searchNav / chatNav 的跳转、冷启动恢复）时只做一件事：收口。
+  // navState.reconcile() 展开就是 requestPlace(currentPlace())——先把当前组合
+  // 还原成 place，再按当前布局重新投影；写哪一格、要不要开左栏都由它决定。
+  // 这里不写 tab：@StorageProp 是只读镜像，写本地字段既回不到 AppStorage，
+  // 还会和它分叉。
   private onTabExternallyChanged(): void {
-    if (this.tab !== this.appliedTab) {
-      this.appliedTab = this.tab;
-    }
-    // dockVisible() 也读 tab，所以切页签同样要重算一次。
+    reconcile();
+    // dockVisible() 也读 tab，所以页签变化同样要重算一次。
     this.syncDock();
+  }
+
+  // 左栏钻取态被外部改写（返回键收面板、ArchivePage 收起、chatNav 打开会话、
+  // 窗口降级成单栏）之后收口一次：单栏残留的 pane 会被投影回"资料整页 / 会话
+  // 页签"，分栏下被推到 3 的页签也会被投影回左栏资料。
+  // 这里不再 syncDock()：本回调里只有 pane 变；分栏下 pane 变了而 tab 没变时，
+  // dockVisible() 的判据（tab + 各页签 navBar 标志）一个都没动。真要重算的是
+  // tab，那条路由 onTabExternallyChanged 走。
+  private onLeftPaneChanged(): void {
+    reconcile();
+  }
+
+  // HDS 报形态变化：miniBarStyle=1 表示迷你播放条展开（此时页签栏被压成一颗球）。
+  private onBarStyleChanged(miniBarStyle: number, tabBarStyle: number): void {
+    const expanded: boolean = miniBarStyle === 1;
+    if (this.miniBarExpanded !== expanded) {
+      this.miniBarExpanded = expanded;
+    }
+  }
+
+  // 迷你栏展开/收起动画结束。热区只在这时候挂上：同一个手势会先把迷你栏展开，
+  // 若此时热区已经存在，它会立刻把刚展开的栏又收回去（用户看到的就是「点了没反应」）。
+  private onMiniBarSettled(style: number): void {
+    const expanded: boolean = style === 1;
+    if (this.miniBarExpanded !== expanded) {
+      this.miniBarExpanded = expanded;
+    }
+    if (this.miniBarSettled !== expanded) {
+      this.miniBarSettled = expanded;
+    }
   }
 
   private syncDock(): void {
@@ -496,7 +566,7 @@ export struct MainScreen {
           // 由系统给，和其它系统图标一致。第二个参数是布尔触发器——false→true
           // 的那一刻播一次，所以只有"变成选中"会弹，重复点已选中的不会。
           SymbolGlyph($r(icon)).fontSize(this.dockIconFontSize(index))
-            .fontColor([this.tab === index ? this.accent() : COLOR_TAB_UNSELECTED])
+            .fontColor([this.dockSelected(index) ? this.accent() : COLOR_TAB_UNSELECTED])
             // 双气泡这类多层图标按不透明度分层：前面那只实心，后面那只淡一层。
             // 单层图标（齿轮、联系人）走这条也不变样。
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_OPACITY)
@@ -528,7 +598,7 @@ export struct MainScreen {
       }
       .width(24).height(24);
       Text(label).fontSize(10)
-        .fontColor(this.tab === index ? this.accent() : COLOR_TAB_UNSELECTED);
+        .fontColor(this.dockSelected(index) ? this.accent() : COLOR_TAB_UNSELECTED);
     }
     // 均分胶囊宽。
     .layoutWeight(1).height('100%')
@@ -542,10 +612,19 @@ export struct MainScreen {
     // 可见文案走上面的 $r()，两者语言一致。
     .accessibilityText(index === 0 && this.unread > 0
       ? str('a11y_tab_unread', this.dockLabel(labelKey), this.unread,
-        this.tab === index ? str('a11y_selected') : '')
+        this.dockSelected(index) ? str('a11y_selected') : '')
       : str('a11y_option_state', this.dockLabel(labelKey),
-        this.tab === index ? str('a11y_selected') : ''))
-    .onClick(() => { this.select(index); });
+        this.dockSelected(index) ? str('a11y_selected') : ''))
+    .onClick(() => {
+      // 页签栏此刻正被迷你播放条压成一颗球：这一下只负责把它收回去（四个格
+      // 的点击区还叠在球底下，绝不能往下走到 select），当前页面保持不变。
+      if (this.miniBarSettled) {
+        collapseMiniBar(this.railController);
+        collapseMiniBar(this.controller);
+        return;
+      }
+      this.select(index);
+    });
   }
 
   @Builder
@@ -560,9 +639,9 @@ export struct MainScreen {
       .width(24).height(24).borderRadius(12)
       // 外圈始终保留：选中用强调色，未选中与其它 Dock 图标一样使用灰色。
       // 宽度恒定也避免切换选中态时头像尺寸跳动。
-      .border({ width: 2, color: this.tab === 3 ? this.accent() : COLOR_TAB_UNSELECTED });
+      .border({ width: 2, color: this.dockSelected(3) ? this.accent() : COLOR_TAB_UNSELECTED });
       Text($r('app.string.tab_profile')).fontSize(10)
-        .fontColor(this.tab === 3 ? this.accent() : COLOR_TAB_UNSELECTED);
+        .fontColor(this.dockSelected(3) ? this.accent() : COLOR_TAB_UNSELECTED);
     }
     .layoutWeight(1).height('100%')
     .justifyContent(FlexAlign.Center)
@@ -571,7 +650,7 @@ export struct MainScreen {
       normal: this.dockItemNormalStyle,
       pressed: this.dockItemPressedStyle
     })
-    .accessibilityText(str('a11y_option_state', str('tab_profile'), this.tab === 3 ? str('a11y_selected') : ''))
+    .accessibilityText(str('a11y_option_state', str('tab_profile'), this.dockSelected(3) ? str('a11y_selected') : ''))
     .onClick(() => { this.select(3); })
     .onTouch((e: TouchEvent): void => { this.onProfileTouch(e); })
     .gesture(LongPressGesture({ fingers: 1, repeat: false, duration: 500 })
@@ -684,8 +763,6 @@ export struct MainScreen {
     }
     return '100%';
   }
-
-
   private storedNavBarFlag(tab: number): boolean {
     if (tab === 0) {
       return this.chatNavBarVisible;
@@ -702,8 +779,28 @@ export struct MainScreen {
     return false;
   }
 
+
+
   private dockVisible(): boolean {
+    // 分栏下会话页的媒体查看器（看图片/放视频全屏）开着时，页签栏必须让开：
+    // 查看器现在留在 ChatPage 里、靠收左栏盖满窗口（见 util/viewerWindowCover），
+    // 而 dock 画在 MainScreen 的根 Stack 上、层级比它高，不主动收就会浮在视频上。
+    // 上游 c5b16975（2026-11-06「底栏跟随各页签真实上报的导航显隐」）把这条判据
+    // 删掉了，只留框架上报——上报在查看器这条路上不可靠，于是全屏视频时底栏又露出来。
+    if (this.chatViewerCoversWindow && this.wallpaperSplit()) {
+      return false;
+    }
     return this.dockActive && this.appIsForeground && !(this.tab === 0 && this.chatDetailHiding) && this.storedNavBarFlag(this.tab);
+  }
+
+  // 胶囊高亮。个人资料钻取态下左栏显示的是资料，页签语义仍停在会话上，
+  // 所以要把亮暗反过来判：第 4 格亮、第 1 格灭——否则屏幕上明明是自己资料、
+  // 亮的却是「聊天」。
+  private dockSelected(index: number): boolean {
+    if (this.leftPaneModeValue === LEFT_PANE_PROFILE) {
+      return index === 3;
+    }
+    return this.tab === index;
   }
 
   // Floating capsule: outer Column carries the horizontal padding + bottom
@@ -737,6 +834,7 @@ export struct MainScreen {
     return dockMiniBarState(this.nowPlaying !== null && this.musicLive,
       this.playerExpanded, this.musicCenterOn);
   }
+
 
   private toggleMiniPlayer(): void {
     animateTo({
@@ -1003,7 +1101,10 @@ export struct MainScreen {
   // 时底色退回实色 surface，否则还是那层玻璃色（材质在的时候压在材质上做染色）。
   onShowContactsTabChanged(): void {
     if (!this.showContactsTab && this.tab === 1) {
-      this.tab = 0;
+      // 联系人页签被关掉时它整格消失，必须退回会话，否则 Tabs 的物理下标会
+      // 指到一个不存在的页。走 requestTab（写页签的唯一入口是 navState）：
+      // 直接写 this.tab 在 @StorageProp 下只改本地镜像，AppStorage 还停在 1。
+      requestTab(0);
     }
   }
 
@@ -1090,6 +1191,8 @@ export struct MainScreen {
         // 没有迷你条时复用迁移前那套留白算法（胶囊宽度回到原来的比例）；
         // 有迷你条时放开，否则页签和播放条挤在一起会重叠。
         sideMargin: this.miniBarActive() ? MINI_SIDE_MARGIN : this.dockPadding(),
+        onBarStyleChange: (mini: number, tab: number): void => { this.onBarStyleChanged(mini, tab); },
+          onMiniBarAnimationEnd: (style: number): void => { this.onMiniBarSettled(style); },
         // 见 miniBarActive：音乐中心开着时常驻，关着时才是"有曲子在放才挂"。
         // 分栏时迷你播放条由自绘胶囊自己画（dock() 里的专辑球 / 播放条），这里不挂。
         miniBar: this.miniBarActive() && !this.leftFloatingDock()
@@ -1110,27 +1213,21 @@ export struct MainScreen {
       }))
       .scrollable(false)
       .animationDuration(powerAnimationDuration(KEY_POWER_SMOOTH_TRANSITIONS, DOCK_SWITCH_DURATION))
-      .onAnimationStart((_currentIndex: number, targetIndex: number) => {
-        const target: number = logicalTabIndex(targetIndex, this.showContactsTab);
-        if (this.tab !== target) {
-          animateTo({
-            duration: powerAnimationDuration(KEY_POWER_SMOOTH_TRANSITIONS, DOCK_SWITCH_DURATION),
-            curve: Curve.EaseOut
-          }, (): void => { this.tab = target; });
-        }
-      })
+      // 原来这里还有一个 .onAnimationStart，把动画目标下标再写一遍 tab。它和
+      // .onChange 写的是同一个值（页签值只该由 navState 写），是本轮"做减法"
+      // 删掉的重复写入之一；动画观感由 Tabs 自己的 animationDuration 负责。
       .onChange((index: number) => {
         // 换页签一律放出沉浸式收起的栏：别的页签的列表不写这个状态，
         // 收着的页签栏在那边就再也出不来了（SPEC-04）。
         if (this.immersiveHidden) {
           AppStorage.setOrCreate(KEY_IMMERSIVE_BARS_HIDDEN, false);
         }
-        // Keep the dock synced if Tabs changes its final index after a rapid
-        // sequence of taps. index 是**物理**下标，换回逻辑再比。
+        // index 是**物理**下标（联系人关掉时后两格前移），换回逻辑再比。
+        // 这里只把"用户点了哪一格"翻译成 place：多栏下第 4 格被投影成左栏
+        // 资料（tab 退回 0，见 navState 的 I1/I2），单栏下才是第 4 个整页。
         const logical: number = logicalTabIndex(index, this.showContactsTab);
         if (this.tab !== logical) {
-          this.appliedTab = logical;
-          this.tab = logical;
+          requestTab(logical);
         }
       })
       .width('100%').height('100%');
@@ -1158,14 +1255,25 @@ export struct MainScreen {
         .barMode(BarMode.Fixed)
         .barPosition(BarPosition.End)
         .barHeight(DOCK_H)
+        // 分栏下音乐胶囊挂在居中的页签栏右侧，合起来重心偏右；这里把整条往左
+        // 挪半个胶囊宽补偿（只在「四格 + 胶囊」这一态，展开态页签已被 HDS 收成一格）。
+
+        // 补偿（只在「四格 + 胶囊」这一态；播放条展开时页签已被 HDS 收成一格）。
         .attributeModifier(new HdsTabsFloatingModifier({
           bottomMargin: Math.max(DOCK_GAP, Math.round(this.bottomSafe * 0.7)),
           sideBarWidth: null,
           // 与手机端同一套留白规则：有迷你条时放开到 MINI_SIDE_MARGIN，否则页签和播放条叠在一起。
           sideMargin: this.miniBarActive() ? MINI_SIDE_MARGIN : this.dockPadding(),
+          onBarStyleChange: (mini: number, tab: number): void => { this.onBarStyleChanged(mini, tab); },
+          onMiniBarAnimationEnd: (style: number): void => { this.onMiniBarSettled(style); },
           // **音乐中心/迷你播放条直接复用手机端那一份**（DockMiniBar 的 miniBar 槽），
           // 不再由平板自绘 dock() 画专辑球/播放条（用户 2026-11-07 修正：
           // 统一两端音乐中心实现，不是恢复平板旧 Dock）。
+          //
+          // 2026-11-08 曾因为「分栏左栏只有 328–440vp，HDS 会把页签栏收成一颗
+          // 圆」而把它设成 null，用户明确否掉了这个做法：**不允许靠删功能规避
+          // 冲突**。冲突的正解在 DockMiniBar 里——折叠态内容区不参与命中测试，
+          // 把点击让给 HDS 的展开手势；展开态才挂"进音乐中心"。
           miniBar: this.miniBarActive()
             ? this.miniBarHolder.content(this.getUIContext(), wrapBuilder(dockMiniBarLayer))
             : null,
@@ -1177,13 +1285,41 @@ export struct MainScreen {
         .scrollable(false)
         .onChange((index: number) => {
           const logical: number = logicalTabIndex(index, this.showContactsTab);
+          // 同主 Tabs：格子只翻译成 place。第 4 格在分栏下由 requestTab 投影成
+          // 左栏资料（tab 退回 0），不再需要"点到了 3 就丢掉"的闸门。
           if (this.tab !== logical) {
-            this.appliedTab = logical;
-            this.tab = logical;
+            requestTab(logical);
           }
         })
         .width(this.dockWidth())
-        .height(DOCK_H + 24);
+        .height(DOCK_H + 24)
+        // 【2026-11-09 全屏视频时收底栏】分栏这条胶囊是**自绘**的、直接挂在根
+        // Stack 上，层级比 ChatPage 里的媒体查看器高：查看器盖满窗口之后，
+        // 它还浮在视频上（真机截图 c7：视频满屏、左下四格 + 音乐球仍在）。
+        // 上面那条 `if (this.leftFloatingDock())` 只随分栏/不分栏切，不会因为
+        // 查看器开关而重挂；而整条 dock 的显隐（dockVisible）一直是给"完整态"
+        // 那条 HdsTabs 用的 barVisible，分栏这条从来没接进去。
+        // 所以这里按同一判据收：visibility 保留布局与 HDS 内部状态，只是不画、
+        // 不接收点击——退出全屏时立刻回来，不会触发迷你栏重新折叠。
+        .visibility(this.dockVisible() ? Visibility.Visible : Visibility.Hidden)
+        .enabled(this.dockVisible());
+
+      // 迷你播放条展开时，HDS 把页签栏压成左侧一颗小球（四个格的点击区就叠在
+      // 那一小块里），但球的可见范围比这块命中区大——手指落在球上经常打不中，
+      // 表现就是"点了没反应"（用户 2026-11-08 反馈）。这里在展开态盖一块与球同大
+      // 的透明热区，点它只做一件事：把迷你栏收回去，四个格重新铺开。
+      // 当前页面不变，要换页面等铺开以后再点。
+      if (this.miniBarSettled && this.dockVisible()) {
+        Row()
+          .width(168)
+          .height(DOCK_H + 24)
+          .backgroundColor(Color.Transparent)
+          .margin({ bottom: Math.max(DOCK_GAP, Math.round(this.bottomSafe * 0.7)) })
+          .onClick((): void => {
+            collapseMiniBar(this.railController);
+            collapseMiniBar(this.controller);
+          })
+      }
       }
 
       // 分栏下不再调用 dock()：普通页签走上面的系统胶囊，音乐中心/迷你播放条走同一颗
