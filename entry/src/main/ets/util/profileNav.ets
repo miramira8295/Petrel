@@ -4,6 +4,8 @@ import { NavStackLike, snapshotOf, stackOf, TabKind } from './navStacks';
 import { decidePush, PushOrigin, StackAction, StackFrame } from './splitRouting';
 import { CHAT_TAB_INDEX, KEY_MAIN_TAB } from './chatNav';
 import { logE } from './log';
+import { KEY_RESOLVED_LAYOUT } from './layoutBreakpoint';
+import { isOverlayBypassed, openProfileOverlay } from './profileOverlay';
 
 // 聊天页签栈里**除会话详情之外**的目的地漏斗：用户资料页、群/频道资料页、
 // 话题列表、归档列表。会话详情自己有 chatNav.ets，形状与本文件一致。
@@ -126,13 +128,38 @@ function pushInto(destName: string, fallbackUrl: string,
 //   'contacts' 资料页是从**左栏**那张联系人列表选出来的，语义与「选一个会话」
 //              完全一致——右栏该被替换而不是叠出第二层，否则连点两个联系人
 //              之后要按两次返回才回得到空态。
+// 双栏下资料改成 MainScreen 上的居中浮层卡（P1-B4）。三栏仍走右侧资料列，
+// 单栏仍整页 push。返回 true 表示已被浮层接管、不再推进栈。
+function interceptProfileOverlay(kind: 'chat' | 'user', params: Record<string, Object>): boolean {
+  if (isOverlayBypassed()) {
+    return false;
+  }
+  const resolved: string = AppStorage.get<string>(KEY_RESOLVED_LAYOUT) ?? '';
+  if (resolved !== 'double') {
+    return false;
+  }
+  const raw: Object | undefined = kind === 'user' ? params['userId'] : params['chatId'];
+  const id: number = (raw as number | undefined) ?? 0;
+  if (id === 0) {
+    return false;
+  }
+  openProfileOverlay(kind, id);
+  return true;
+}
+
 export function navigateToProfile(params: Record<string, Object>, tab: TabKind = 'chat'): void {
+  if (interceptProfileOverlay('user', params)) {
+    return;
+  }
   const origin: PushOrigin = tab === 'chat' ? 'content' : 'navbar';
   pushInto(PROFILE_DEST_NAME, PROFILE_PAGE_URL, params, origin, tab);
 }
 
 // 群/频道资料页。同 navigateToProfile，'content'。
 export function navigateToChatProfile(params: Record<string, Object>): void {
+  if (interceptProfileOverlay('chat', params)) {
+    return;
+  }
   pushInto(CHAT_PROFILE_DEST_NAME, CHAT_PROFILE_PAGE_URL, params, 'content', 'chat');
 }
 
@@ -160,3 +187,5 @@ export function navigateToDirectMessagesTopics(
 export function navigateToArchive(): void {
   pushInto(ARCHIVE_DEST_NAME, ARCHIVE_PAGE_URL, undefined, 'navbar', 'chat');
 }
+
+

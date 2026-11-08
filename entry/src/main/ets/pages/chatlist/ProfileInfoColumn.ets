@@ -1,5 +1,7 @@
 import { ChatEntry } from '../../store/ChatEntry';
 import { getChatStore } from '../../tdkit/Globals';
+import { router } from '@kit.ArkUI';
+import { PROFILE_TAB_MEDIA, PROFILE_TAB_MEMBERS } from '../../store/ChatProfileStore';
 import { setMute } from '../../store/ChatActions';
 import { KEY_INFO_WIDTH } from '../../util/layoutModeSettings';
 import { navigateToChatProfile } from '../../util/profileNav';
@@ -20,6 +22,8 @@ export struct ProfileInfoColumn {
   @State private initials: string = '';
   @State private kind: string = '';
   @State private muted: boolean = false;
+  @State private rawKind: string = '';
+  @State private memberCount: number = 0;
   private unsubscribe: (() => void) | null = null;
 
   aboutToAppear(): void {
@@ -43,17 +47,15 @@ export struct ProfileInfoColumn {
       this.muted = false;
       return;
     }
-    const chats: ChatEntry[] = getChatStore().getChats();
-    for (let i = 0; i < chats.length; i++) {
-      const c: ChatEntry = chats[i];
-      if (c.id === this.chatId) {
-        this.title = c.title;
-        this.avatarPath = c.avatarPath;
-        this.initials = c.initials !== '' ? c.initials : c.title.charAt(0);
-        this.kind = this.kindName(c.kind);
-        this.muted = c.isMuted;
-        return;
-      }
+    const c: ChatEntry | undefined = getChatStore().entryOf(this.chatId);
+    if (c !== undefined) {
+      this.title = c.title;
+      this.avatarPath = c.avatarPath;
+      this.initials = c.initials !== '' ? c.initials : c.title.charAt(0);
+      this.kind = this.kindName(c.kind);
+      this.muted = c.isMuted;
+      this.rawKind = c.kind;
+      this.memberCount = getChatStore().supergroupMemberCount(this.chatId);
     }
   }
 
@@ -124,6 +126,20 @@ export struct ProfileInfoColumn {
           this.actionRow('通知', this.muted ? '已静音' : '开启', (): void => {
             setMute(this.chatId, this.muted ? 0 : 2147483647);
           });
+          if (this.memberCount > 0) {
+            this.actionRow('成员', `${this.memberCount} ›`, (): void => {
+              navigateToChatProfile({ 'chatId': this.chatId, 'tab': PROFILE_TAB_MEMBERS });
+            });
+          }
+          this.actionRow('共享媒体', '打开 ›', (): void => {
+            navigateToChatProfile({ 'chatId': this.chatId, 'tab': PROFILE_TAB_MEDIA });
+          });
+          if (this.rawKind === 'basicGroup' || this.rawKind === 'supergroup' || this.rawKind === 'channel') {
+            this.actionRow('管理', '打开 ›', (): void => {
+              router.pushUrl({ url: 'pages/main/GroupAdminPage', params: { 'chatId': this.chatId } })
+                .catch((e: Error): void => { console.error(`GroupAdminPage push failed: ${e.message}`); });
+            });
+          }
           this.actionRow('完整资料', '打开 ›', (): void => {
             navigateToChatProfile({ 'chatId': this.chatId });
           });

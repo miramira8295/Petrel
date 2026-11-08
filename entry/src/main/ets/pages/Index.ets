@@ -6,6 +6,7 @@ import { common } from '@kit.AbilityKit';
 import { str } from '../util/strings';
 import { promptAction, router } from '@kit.ArkUI';
 import { stackOf, TabKind } from '../util/navStacks';
+import { closeProfileOverlay, isProfileOverlayOpen } from '../util/profileOverlay';
 import { AuthStage } from '../tdkit/AuthService';
 import {
   activeSummaryHasUser, canReturnToPreviousTdAccount, getAuthService, healActiveSlotIfSignedOut, returnToPreviousTdAccount
@@ -364,6 +365,11 @@ struct Index {
 
   onBackPress(): boolean {
     if (collapseFloatingVideo()) { return true; }
+    // P1-B4：双栏资料浮层卡开着时，返回键先关卡片（严格模态，不穿透到背景栈）。
+    if (isProfileOverlayOpen()) {
+      closeProfileOverlay();
+      return true;
+    }
     // 分享选择器开着时先吃掉返回键。它是画在 Index 这一层的浮层，不在
     // Navigation 的栈里——不拦的话返回键会去弹 Navigation 的目的地，
     // 抽屉留在原地不动（用户实测"不受返回键控制"）。

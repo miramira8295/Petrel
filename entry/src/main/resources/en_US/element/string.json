@@ -8369,9 +8369,42 @@
       "value": "Unmute"
     },
     {
+      "name": "profile_tab_title",
+      "value": "Profile"
+    },
+        {
+      "name": "profile_action_message",
+      "value": "Message"
+    },
+    {
+      "name": "profile_complete",
+      "value": "Full profile"
+    },
+    {
+      "name": "profile_row_notifications",
+      "value": "Notifications"
+    },
+    {
+      "name": "cp_muted",
+      "value": "Muted"
+    },
+    {
+      "name": "cp_notifications_on",
+      "value": "On"
+    },
+    {
+      "name": "cpp_user",
+      "value": "User"
+    },
+    {
+      "name": "cpp_secret_chat",
+      "value": "Secret chat"
+    },
+    {
       "name": "cp_mute",
       "value": "Mute"
     },
+
     {
       "name": "cp_auto_delete",
       "value": "Auto-delete messages"
@@ -13386,3 +13419,4 @@
     }
   ]
 }
+

@@ -12,6 +12,8 @@ import { KEY_APP_DARK } from '../../util/theme';
 import { currentDeviceClass, publishLayoutState } from '../../util/layoutState';
 import { KEY_LAYOUT_MODE } from '../../util/layoutModeSettings';
 import { navigateToSetting } from '../../util/settingsNav';
+import { ProfileOverlayCard } from '../chatlist/ProfileOverlayCard';
+import { closeProfileOverlay, KEY_PROFILE_OVERLAY_OPEN } from '../../util/profileOverlay';
 import { appWallpaperActive, KEY_SPLIT_UNIFIED_BG } from '../../util/localWallpaper';
 import { DOCK_MODE_LEFT_FLOATING } from '../../util/splitMetrics';
 
@@ -122,6 +124,8 @@ export struct MainScreen {
   @StorageProp('screenWidthVp') @Watch('syncWallpaperFlag') screenW: number = 360;
   // 设置里的「强制单栏」（宽屏也当手机用）。P0 兼容键，P1 起只作旧布局回退。
   @StorageProp(KEY_FORCE_SINGLE_COLUMN) @Watch('syncWallpaperFlag') forceSingleColumn: boolean = false;
+  // 双栏资料浮层卡（P1-B4）：卡片挂在根 Stack 最上层，open 由 profileNav 置位。
+  @StorageProp(KEY_PROFILE_OVERLAY_OPEN) profileOverlayOpen: boolean = false;
   // P1：布局模式变化也要重发 resolvedLayout（auto 的手动切换不伴随窗口变化）。
   @StorageProp(KEY_LAYOUT_MODE) @Watch('syncResolvedLayout') private layoutModeValue: string = 'auto';
   // 聊天页签分栏时左栏的实际宽度（vp，0 = 还没量到）。由 ChatListPage 在自己的
@@ -1191,6 +1195,23 @@ export struct MainScreen {
       // （见 dock() 末尾与 syncDock()）。这里**不能**用 `if`：条件渲染摘掉的子树
       // 在退场过渡期间不再重新构建，属性冻结在「还可点」的那一版上，于是有
       // 160ms 的空档能吃掉落在 ChatPage 输入区上的点击。
+      if (this.profileOverlayOpen) {
+        Stack({ alignContent: Alignment.Center }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#7F000000')
+            .hitTestBehavior(HitTestMode.Block)
+            .onClick((): void => {
+              closeProfileOverlay();
+            })
+          ProfileOverlayCard()
+        }
+        .width('100%')
+        .height('100%')
+        .zIndex(200)
+      }
+
       if (this.switcherShown) {
         AccountSwitchPopup({
           accounts: this.switcherAccounts,
