@@ -8814,6 +8814,10 @@
       "value": "更多聊天操作"
     },
     {
+      "name": "cp_chat_info",
+      "value": "会话信息"
+    },
+    {
       "name": "cp_bot_commands",
       "value": "Bot 命令"
     },
@@ -12196,6 +12200,10 @@
     {
       "name": "settings_layout_triple",
       "value": "三栏"
+    },
+    {
+      "name": "settings_layout_multi",
+      "value": "多栏"
     },
     {
       "name": "settings_layout_auto_sub",

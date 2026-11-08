@@ -17,7 +17,7 @@
 
 import { deviceInfo } from '@kit.BasicServicesKit';
 import {
-  DEVICE_2IN1, LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE, LAYOUT_TRIPLE,
+  DEVICE_2IN1, LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_MULTI, LAYOUT_SINGLE, LAYOUT_TRIPLE,
   PaneResolution, capsuleWidth, deviceClassOf, profilePresentation, resolvePaneLayout
 } from './paneLayout';
 import { LayoutSettingsSnapshot, readLayoutSettings } from './layoutModeSettings';
@@ -37,12 +37,14 @@ export function currentDeviceClass(): string {
   }
 }
 
-// 解析时该用哪份列表宽：三栏（含 auto 的 2in1 目标）用 navWidthTriple，
-// 其余用 navWidthDouble。它是"输入偏好"，不是持久化判据。
+// 解析时该用哪份列表宽：三栏偏好（multi / 历史 triple，含 auto 的 2in1 目标）
+// 用 navWidthTriple，其余用 navWidthDouble。它是"输入偏好"，不是持久化判据。
+// 必须把 LAYOUT_MULTI 也算进来：multi 在宽窗会解析成三栏，若这里先拿 double
+// 宽去算，列表宽会在跨过门槛时跳一次再被钳回来。
 export function listWidthFor(snapshot: LayoutSettingsSnapshot, device: string): number {
   const cls: string = deviceClassOf(device);
-  const wantsTripleWidth: boolean = snapshot.mode === LAYOUT_TRIPLE ||
-    (snapshot.mode === LAYOUT_AUTO && cls === DEVICE_2IN1);
+  const wantsTripleWidth: boolean = snapshot.mode === LAYOUT_MULTI ||
+    snapshot.mode === LAYOUT_TRIPLE || (snapshot.mode === LAYOUT_AUTO && cls === DEVICE_2IN1);
   return wantsTripleWidth ? snapshot.navWidthTriple : snapshot.navWidthDouble;
 }
 

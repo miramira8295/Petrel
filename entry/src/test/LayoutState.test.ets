@@ -5,13 +5,13 @@
 //
 // 关键契约：
 //   - 设备只影响 auto（手机单、平板双、2in1 三档随空间）；
-//   - 手动 single/double/triple 不受设备目标影响；
+//   - 手动 single / multi 不受设备目标影响；历史 double / triple 归一为 multi；
 //   - infoVisible 恒等于 effective==='triple'；
 //   - auto + 2in1 的 1262/1240 滞回只由 prevTriple 决定。
 
 import { describe, expect, it } from '@ohos/hypium';
 import {
-  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE, LAYOUT_TRIPLE
+  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_MULTI, LAYOUT_SINGLE, LAYOUT_TRIPLE
 } from '../main/ets/util/paneLayout';
 import type { LayoutSettingsSnapshot } from '../main/ets/util/layoutModeSettings';
 import {
@@ -96,34 +96,42 @@ export default function layoutStateTest() {
       expect(r.infoVisible).assertFalse();
     });
 
-    it('手动 double：够三栏也不升三栏', 0, () => {
-      const r = resolveForSnapshot(snap(LAYOUT_DOUBLE, 360, 360, 340), TWO_IN_ONE, 1642, 920, false);
-      expect(r.effective).assertEqual(LAYOUT_DOUBLE);
-      expect(r.infoVisible).assertFalse();
-      expect(r.infoW).assertEqual(0);
+    // 三档化前这里是「double 够三栏也不升」；现在 multi 的语义就是"有空间要
+    // 三栏"，1642 的 2in1 必须升，且资料列随之出现。
+    it('手动 multi：够三栏就升三栏', 0, () => {
+      const r = resolveForSnapshot(snap(LAYOUT_MULTI, 360, 360, 340), TWO_IN_ONE, 1642, 920, false);
+      expect(r.effective).assertEqual(LAYOUT_TRIPLE);
+      expect(r.infoVisible).assertTrue();
+      expect(r.infoW).assertEqual(340);
     });
 
-    it('手动 triple：1190(info300) 进三栏、1189 降双栏、759 降单栏', 0, () => {
-      const triple = resolveForSnapshot(snap(LAYOUT_TRIPLE, 360, 360, 300), TWO_IN_ONE, 1190, 920, false);
+    it('历史别名 double 与新 multi 行为一致', 0, () => {
+      const r = resolveForSnapshot(snap(LAYOUT_DOUBLE, 360, 360, 340), TWO_IN_ONE, 1642, 920, false);
+      expect(r.effective).assertEqual(LAYOUT_TRIPLE);
+    });
+
+    it('手动 multi：1190(info300) 进三栏、1189 降双栏、759 降单栏', 0, () => {
+      const triple = resolveForSnapshot(snap(LAYOUT_MULTI, 360, 360, 300), TWO_IN_ONE, 1190, 920, false);
       expect(triple.effective).assertEqual(LAYOUT_TRIPLE);
       expect(near(triple.navW, 888)).assertTrue();
       expect(near(triple.listW, 328)).assertTrue();
       expect(near(triple.chatW, 560)).assertTrue();
-      const doubled = resolveForSnapshot(snap(LAYOUT_TRIPLE, 360, 360, 300), TWO_IN_ONE, 1189, 920, false);
+      const doubled = resolveForSnapshot(snap(LAYOUT_MULTI, 360, 360, 300), TWO_IN_ONE, 1189, 920, false);
       expect(doubled.effective).assertEqual(LAYOUT_DOUBLE);
       expect(doubled.reason).assertEqual('triple-degraded-no-space');
-      const single = resolveForSnapshot(snap(LAYOUT_TRIPLE, 360, 360, 300), TWO_IN_ONE, 759, 920, false);
+      const single = resolveForSnapshot(snap(LAYOUT_MULTI, 360, 360, 300), TWO_IN_ONE, 759, 920, false);
       expect(single.effective).assertEqual(LAYOUT_SINGLE);
       expect(single.reason).assertEqual('double-degraded-no-space');
     });
 
-    it('手动 triple：高度不足 520 直接单栏', 0, () => {
-      const r = resolveForSnapshot(snap(LAYOUT_TRIPLE, 360, 360, 340), TWO_IN_ONE, 1642, 519, false);
+    it('手动 multi：高度不足 520 直接单栏', 0, () => {
+      const r = resolveForSnapshot(snap(LAYOUT_MULTI, 360, 360, 340), TWO_IN_ONE, 1642, 519, false);
       expect(r.effective).assertEqual(LAYOUT_SINGLE);
     });
 
     // ---- 列表宽输入选择 ------------------------------------------------
-    it('listWidthFor：三栏/auto-2in1 用 triple 宽，其余用 double 宽', 0, () => {
+    it('listWidthFor：multi / 三栏 / auto-2in1 用 triple 宽，其余用 double 宽', 0, () => {
+      expect(listWidthFor(snap(LAYOUT_MULTI, 350, 400, 340), TABLET)).assertEqual(400);
       expect(listWidthFor(snap(LAYOUT_TRIPLE, 350, 400, 340), TABLET)).assertEqual(400);
       expect(listWidthFor(snap(LAYOUT_AUTO, 350, 400, 340), TWO_IN_ONE)).assertEqual(400);
       expect(listWidthFor(snap(LAYOUT_AUTO, 350, 400, 340), TABLET)).assertEqual(350);
@@ -156,6 +164,8 @@ export default function layoutStateTest() {
       expect(resolvedLayoutActive(LAYOUT_SINGLE)).assertTrue();
       expect(resolvedLayoutActive(LAYOUT_DOUBLE)).assertTrue();
       expect(resolvedLayoutActive(LAYOUT_TRIPLE)).assertTrue();
+      // 'multi' 是偏好不是解析结果，不能当有效布局；Resolved 只写三值。
+      expect(resolvedLayoutActive(LAYOUT_MULTI)).assertFalse();
       expect(resolvedLayoutActive('')).assertFalse();
       expect(resolvedLayoutActive('auto')).assertFalse();
     });

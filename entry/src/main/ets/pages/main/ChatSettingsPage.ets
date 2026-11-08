@@ -24,7 +24,7 @@ import {
 } from '../../util/wallpaperSlot';
 import { KEY_APP_DARK } from '../../util/theme';
 import { KEY_LAYOUT_MODE } from '../../util/layoutModeSettings';
-import { LAYOUT_AUTO, LAYOUT_SINGLE, LAYOUT_DOUBLE, LAYOUT_TRIPLE } from '../../util/paneLayout';
+import { LAYOUT_AUTO, LAYOUT_MULTI, LAYOUT_SINGLE } from '../../util/paneLayout';
 import {
   KEY_TEXT_SIZE, KEY_BUBBLE_RADIUS, KEY_THREE_LINES, KEY_NIGHT_MODE, KEY_REDUCE_ANIM, KEY_SEND_BY_ENTER,
   KEY_POWER_SMOOTH_TRANSITIONS, KEY_IN_APP_BROWSER, KEY_HIDE_PINNED_DEFAULT,
@@ -1027,6 +1027,9 @@ export struct ChatSettingsPage {
 
   // 布局模式：唯一入口。auto 交给 unified resolver 按设备/窗口解析；手动模式
   // 只覆盖解析结果，不反向写偏好、不因空间不足改偏好。
+  // 2026-11-08 三档化：原来的「双栏 / 三栏」合并成「多栏」——用户确认三栏只有
+  // 聊天页会出现，没必要让所有人先在设置里理解两个档位；多栏空间不够时自动降
+  // 双栏/单栏，第三栏本身由聊天页顶栏的资料列开关控制。
   @Builder
   layoutModeCard() {
     Column({ space: 10 }) {
@@ -1037,8 +1040,7 @@ export struct ChatSettingsPage {
       Row({ space: 8 }) {
         this.layoutModeChip(LAYOUT_AUTO, str('settings_layout_auto'))
         this.layoutModeChip(LAYOUT_SINGLE, str('settings_layout_single'))
-        this.layoutModeChip(LAYOUT_DOUBLE, str('settings_layout_double'))
-        this.layoutModeChip(LAYOUT_TRIPLE, str('settings_layout_triple'))
+        this.layoutModeChip(LAYOUT_MULTI, str('settings_layout_multi'))
       }.width('100%')
       Text(str('settings_layout_auto_sub')).fontSize(12).fontColor(COLOR_TEXT_SECONDARY)
     }
@@ -1060,8 +1062,9 @@ export struct ChatSettingsPage {
 
   private layoutModeName(): ResourceStr {
     if (this.layoutMode === LAYOUT_SINGLE) { return str('settings_layout_single'); }
-    if (this.layoutMode === LAYOUT_DOUBLE) { return str('settings_layout_double'); }
-    if (this.layoutMode === LAYOUT_TRIPLE) { return str('settings_layout_triple'); }
+    // 历史值 'double' / 'triple' 不会再被写入，但老用户档案里可能还留着，
+    // 显示成「多栏」而不是空白；normalize 在 boot 时也会把它们改成 multi。
+    if (this.layoutMode === LAYOUT_MULTI) { return str('settings_layout_multi'); }
     return str('settings_layout_auto');
   }
   build() {

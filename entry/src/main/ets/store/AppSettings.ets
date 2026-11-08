@@ -32,15 +32,15 @@ import {
   SURFACE_GLASS_LEVEL_DEFAULT, SURFACE_GLASS_ON_DEFAULT
 } from '../util/surfaceGlass';
 import {
-  INFO_WIDTH_DEFAULT, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MIGRATED_V1, KEY_LAYOUT_MODE,
-  KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
+  INFO_WIDTH_DEFAULT, KEY_INFO_COLUMN_OPEN, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MIGRATED_V1,
+  KEY_LAYOUT_MODE, KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
   NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues,
   legacyValueFor, planLayoutMigration
 } from '../util/layoutModeSettings';
 import type { LayoutMigrationPlan, LayoutMigrationState } from '../util/layoutModeSettings';
 import { clearResolvedLayout } from '../util/layoutState';
 import {
-  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE, LAYOUT_TRIPLE, normalizeLayoutMode,
+  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_MULTI, LAYOUT_SINGLE, LAYOUT_TRIPLE, normalizeLayoutMode,
   sanitizeInfoWidth, sanitizeNavWidth
 } from '../util/paneLayout';
 
@@ -456,7 +456,10 @@ const DATA_BOOLEAN_TRUE_DEFAULTS: string[] = [
   // 音乐/语音/直播默认续播（符合平台惯例）；视频默认不续播。
   KEY_BG_PLAY_MUSIC,
   KEY_BG_PLAY_VOICE,
-  KEY_BG_PLAY_LIVE
+  KEY_BG_PLAY_LIVE,
+  // 聊天页右侧资料列默认展开。三档化后第三栏只在聊天页出现，用户用顶栏那颗
+  // 「▯｜」键自己收起；这是它唯一的持久化偏好（全局，不随会话重置）。
+  KEY_INFO_COLUMN_OPEN
 ];
 
 // 平板/宽屏强制单栏（用户要求）：分栏那条路上的媒体查看器走全模态、标题栏不收，
@@ -592,8 +595,13 @@ async function readLayoutMigrationState(s: preferences.Preferences): Promise<Lay
   const legacyTrue: boolean = rawLegacy === true;
   const modePersisted: boolean = s.hasSync(KEY_LAYOUT_MODE);
   const persistedMode: string = modePersisted ? await s.get(KEY_LAYOUT_MODE, '') as string : '';
+  // 'multi' 必须算有效值（2026-11-08 三档化）：漏掉它会让每次启动都走
+  // recover-corrupt，把用户刚选的多栏重置回 auto。'double' / 'triple' 作为历史
+  // 别名继续算有效——老版本存下的值不该被当成损坏配置清掉，boot 时由
+  // normalizeLayoutMode 统一改成 'multi'。
   const modeValid: boolean = persistedMode === LAYOUT_SINGLE || persistedMode === LAYOUT_DOUBLE ||
-    persistedMode === LAYOUT_TRIPLE || persistedMode === LAYOUT_AUTO;
+    persistedMode === LAYOUT_TRIPLE || persistedMode === LAYOUT_MULTI ||
+    persistedMode === LAYOUT_AUTO;
   return {
     enabled: enabled,
     modePersisted: modePersisted,

@@ -8814,6 +8814,10 @@
       "value": "More chat actions"
     },
     {
+      "name": "cp_chat_info",
+      "value": "Info"
+    },
+    {
       "name": "cp_bot_commands",
       "value": "Bot commands"
     },
@@ -12196,6 +12200,10 @@
     {
       "name": "settings_layout_triple",
       "value": "Triple"
+    },
+    {
+      "name": "settings_layout_multi",
+      "value": "Multi-column"
     },
     {
       "name": "settings_layout_auto_sub",

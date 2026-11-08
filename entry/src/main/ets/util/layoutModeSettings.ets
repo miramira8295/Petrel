@@ -1,11 +1,12 @@
 // 布局模式的持久化键、读取封装与迁移状态机（P0）。
 //
-// 7 个键、默认值、迁移判据集中在这里，页面与 store 不直接写字符串：
-//   layoutMode           single / double / triple / auto（默认 auto）
+// 8 个键、默认值、迁移判据集中在这里，页面与 store 不直接写字符串：
+//   layoutMode           auto / single / multi（默认 auto；历史 double / triple 归一为 multi）
 //   navWidthDouble       双栏列表宽，328–440（默认 360）
 //   navWidthTriple       三栏列表宽，328–440（默认 360）
 //   infoWidth            信息栏宽，300–400（默认 340）
 //   infoVisible          旧布局资料栏显隐（兼容键，新布局不读它做判据）
+//   infoColumnOpen       聊天页右侧资料列的用户开合（默认 true，不参与布局解析）
 //   layout_v2_enabled    新多栏外壳总开关（实施期默认 false）
 //   layoutMigratedV1     迁移标记：旧 forceSingleColumn 是否已迁移过一次
 //
@@ -32,6 +33,10 @@ export const KEY_NAV_WIDTH_DOUBLE: string = 'navWidthDouble';
 export const KEY_NAV_WIDTH_TRIPLE: string = 'navWidthTriple';
 export const KEY_INFO_WIDTH: string = 'infoWidth';
 export const KEY_INFO_VISIBLE: string = 'infoVisible';
+// 聊天页右侧资料列的开合偏好（2026-11-08 三档化）。默认开；持久化、全局，
+// 不随会话重置。它只控制"第三栏画不画"，**不得**喂给 resolvePaneLayout：
+// 否则收起/展开会让布局重新解析一遍，窗口宽度没变却重算栏位，画面会抖。
+export const KEY_INFO_COLUMN_OPEN: string = 'infoColumnOpen';
 export const KEY_LAYOUT_V2: string = 'layout_v2_enabled';
 export const KEY_LAYOUT_MIGRATED_V1: string = 'layoutMigratedV1';
 

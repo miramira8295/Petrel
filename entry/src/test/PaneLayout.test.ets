@@ -1,8 +1,12 @@
 // P0 多栏布局纯函数单测。
 //
 // 覆盖 12_P0实施任务书 §5 与 2026-11-08 P0 修复任务书 §10：
-//   设备三档、auto 六类宽点 + 滞回、手动 single/double/triple 边界、
+//   设备三档、auto 六类宽点 + 滞回、手动 single/multi 边界、
 //   宽度 8 组、迁移状态机 10 例、资料栏派生 6 例、boot 装载、sanitize、常量。
+//
+// 2026-11-08 三档化：用户偏好只剩 auto / single / multi；历史值 double / triple
+// 归一为 multi（它们原本的语义就是"至少双栏、有空间就三栏"），resolved 有效值
+// 仍是 single / double / triple。
 //
 // 这些用例只验算术与状态机契约，不验布局观感与生命周期——后者在 P2/P3 真机验。
 // 任何一条失败都意味着 05 规范与代码已经分叉，先改设计文档再改实现。
@@ -10,10 +14,10 @@
 
 import { describe, expect, it } from '@ohos/hypium';
 import {
-  AUTO_TRIPLE_ENTER_VP, AUTO_TRIPLE_EXIT_VP, LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE,
-  LAYOUT_TRIPLE, TRIPLE_ENTER_W_VP, TRIPLE_EXIT_W_VP, autoTarget, canDouble, canTriple,
-  capsuleWidth, deviceClassOf, infoVisibleDefault, legacyForceSingleFor, normalizeLayoutMode,
-  profilePresentation, resolvePaneLayout, sanitizeInfoWidth, sanitizeNavWidth
+  AUTO_TRIPLE_ENTER_VP, AUTO_TRIPLE_EXIT_VP, LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_MULTI,
+  LAYOUT_SINGLE, LAYOUT_TRIPLE, TRIPLE_ENTER_W_VP, TRIPLE_EXIT_W_VP, autoTarget, canDouble,
+  canTriple, capsuleWidth, deviceClassOf, infoVisibleDefault, legacyForceSingleFor,
+  normalizeLayoutMode, profilePresentation, resolvePaneLayout, sanitizeInfoWidth, sanitizeNavWidth
 } from '../main/ets/util/paneLayout';
 import {
   bootLayoutValues, effectiveInfoVisible, INFO_WIDTH_DEFAULT, infoVisibleFor,
@@ -130,27 +134,36 @@ export default function paneLayoutTest() {
       expect(r.effective).assertEqual(LAYOUT_SINGLE);
     });
 
-    it('手动 double 759 单栏、760 双栏', 0, () => {
-      const a = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 759, 900, 360, 340, false);
-      const b = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 760, 900, 328, 340, false);
+    it('手动 multi 759 单栏、760 双栏', 0, () => {
+      const a = resolvePaneLayout(LAYOUT_MULTI, TABLET, 759, 900, 360, 340, false);
+      const b = resolvePaneLayout(LAYOUT_MULTI, TABLET, 760, 900, 328, 340, false);
       expect(a.effective).assertEqual(LAYOUT_SINGLE);
       expect(b.effective).assertEqual(LAYOUT_DOUBLE);
     });
 
-    it('手动 double 即使空间够三栏也不升级', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_DOUBLE, TWO_IN_ONE, 1642, 1094.7, 360, 340, false);
-      expect(r.effective).assertEqual(LAYOUT_DOUBLE);
-      expect(r.infoVisible).assertFalse();
+    // 三档化前这里是「double 即使够宽也不升三栏」；现在用户选的 multi 就是
+    // "有空间要三栏"，必须升。历史别名 double / triple 归一后行为相同。
+    it('手动 multi 空间够三栏就升级（1642 2in1 → triple）', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TWO_IN_ONE, 1642, 1094.7, 360, 340, false);
+      expect(r.effective).assertEqual(LAYOUT_TRIPLE);
+      expect(r.infoVisible).assertTrue();
     });
 
-    it('手动 double 高 519 降单栏', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 1200, 519, 360, 340, false);
+    it('历史别名 double / triple 与新 multi 行为一致', 0, () => {
+      const a = resolvePaneLayout(LAYOUT_DOUBLE, TWO_IN_ONE, 1642, 1094.7, 360, 340, false);
+      const b = resolvePaneLayout(LAYOUT_TRIPLE, TWO_IN_ONE, 1642, 1094.7, 360, 340, false);
+      expect(a.effective).assertEqual(LAYOUT_TRIPLE);
+      expect(b.effective).assertEqual(LAYOUT_TRIPLE);
+    });
+
+    it('手动 multi 高 519 降单栏', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1200, 519, 360, 340, false);
       expect(r.effective).assertEqual(LAYOUT_SINGLE);
     });
 
-    it('手动 triple 1189 降双栏、1190 三栏（info 300）', 0, () => {
-      const a = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1189, 900, 328, 300, false);
-      const b = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1190, 900, 328, 300, false);
+    it('手动 multi 1189 降双栏、1190 三栏（info 300）', 0, () => {
+      const a = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1189, 900, 328, 300, false);
+      const b = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1190, 900, 328, 300, false);
       expect(a.effective).assertEqual(LAYOUT_DOUBLE);
       expect(b.effective).assertEqual(LAYOUT_TRIPLE);
       expect(b.navW).assertEqual(888);
@@ -158,69 +171,70 @@ export default function paneLayoutTest() {
       expect(b.chatW).assertEqual(560);
     });
 
-    it('手动 triple 1230 默认 info 340 三栏', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1230, 900, 328, 340, false);
+    it('手动 multi 1230 默认 info 340 三栏', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1230, 900, 328, 340, false);
       expect(r.effective).assertEqual(LAYOUT_TRIPLE);
     });
 
-    it('手动 triple 高 519 降单栏', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1642, 519, 328, 340, false);
+    it('手动 multi 高 519 降单栏（宽 1642 也不救）', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1642, 519, 328, 340, false);
       expect(r.effective).assertEqual(LAYOUT_SINGLE);
     });
 
-    it('手动 triple 三→双→单后恢复回三栏', 0, () => {
-      const down = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 900, 900, 328, 340, true);
-      const up = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1262, 900, 328, 340, false);
+    it('手动 multi 三→双→单后恢复回三栏', 0, () => {
+      const down = resolvePaneLayout(LAYOUT_MULTI, TABLET, 900, 900, 328, 340, true);
+      const up = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1262, 900, 328, 340, false);
       expect(down.effective).assertEqual(LAYOUT_DOUBLE);
       expect(up.effective).assertEqual(LAYOUT_TRIPLE);
     });
 
-    it('手动 triple 的 reason 在空间不足时标 triple-degraded', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 900, 900, 328, 340, false);
+    it('手动 multi 的 reason 在空间不足时标 triple-degraded', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 900, 900, 328, 340, false);
       expect(r.reason).assertEqual('triple-degraded-no-space');
     });
 
     // ---- 宽度 --------------------------------------------------------------
     it('1317.6：navW 975.6 / list 360 / chat 615.6', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1317.6, 865.9, 360, 340, false);
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1317.6, 865.9, 360, 340, false);
       expect(near(r.navW, 975.6)).assertTrue();
       expect(r.listW).assertEqual(360);
       expect(near(r.chatW, 615.6)).assertTrue();
     });
 
     it('1262：list 360 / chat 560', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1262, 900, 360, 340, false);
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1262, 900, 360, 340, false);
       expect(r.listW).assertEqual(360);
       expect(r.chatW).assertEqual(560);
     });
 
     it('1190：navW 888 / list 328 / chat 560', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1190, 900, 328, 300, false);
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1190, 900, 328, 300, false);
       expect(r.navW).assertEqual(888);
       expect(r.listW).assertEqual(328);
       expect(r.chatW).assertEqual(560);
     });
 
-    it('840：list 328 / chat 510', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 840, 900, 328, 340, false);
+    it('840：multi 空间不够三栏，降为双栏 list 328 / chat 510', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 840, 900, 328, 340, false);
+      expect(r.effective).assertEqual(LAYOUT_DOUBLE);
       expect(r.listW).assertEqual(328);
       expect(r.chatW).assertEqual(510);
     });
 
-    it('1100：list 373 / chat 725', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 1100, 900, 373, 340, false);
+    it('1100：multi 降为双栏 list 373 / chat 725', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1100, 900, 373, 340, false);
       expect(r.listW).assertEqual(373);
       expect(r.chatW).assertEqual(725);
     });
 
-    it('760：list 328 / chat 430', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_DOUBLE, TABLET, 760, 900, 328, 340, false);
+    it('760：multi 降为双栏 list 328 / chat 430', 0, () => {
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 760, 900, 328, 340, false);
       expect(r.listW).assertEqual(328);
       expect(r.chatW).assertEqual(430);
     });
 
     it('1200：list 328 / chat 570（info 300）', 0, () => {
-      const r = resolvePaneLayout(LAYOUT_TRIPLE, TABLET, 1200, 900, 328, 300, false);
+      const r = resolvePaneLayout(LAYOUT_MULTI, TABLET, 1200, 900, 328, 300, false);
       expect(r.listW).assertEqual(328);
       expect(r.chatW).assertEqual(570);
     });
@@ -252,9 +266,13 @@ export default function paneLayoutTest() {
       expect(sanitizeInfoWidth(Number.NaN)).assertEqual(340);
     });
 
-    it('模式归一：脏值回 auto', 0, () => {
+    it('模式归一：double / triple 收编为 multi，脏值回 auto', 0, () => {
       expect(normalizeLayoutMode('single')).assertEqual('single');
-      expect(normalizeLayoutMode('triple')).assertEqual('triple');
+      expect(normalizeLayoutMode('multi')).assertEqual('multi');
+      // 历史别名：老用户存过的 double / triple 都映射到 multi，避免升级后
+      // 从三栏悄悄掉回双栏。
+      expect(normalizeLayoutMode('double')).assertEqual('multi');
+      expect(normalizeLayoutMode('triple')).assertEqual('multi');
       expect(normalizeLayoutMode('split')).assertEqual('auto');
       expect(normalizeLayoutMode('')).assertEqual('auto');
       expect(normalizeLayoutMode('AUTO')).assertEqual('auto');
@@ -322,16 +340,16 @@ export default function paneLayoutTest() {
 
     it('迁移 M7：新配置有效则保留，不读旧配置', 0, () => {
       const plan = planLayoutMigration({
-        enabled: true, modePersisted: true, modeValid: true, modeValue: 'double',
+        enabled: true, modePersisted: true, modeValid: true, modeValue: 'multi',
         flagPersisted: true, hasLegacy: true, legacyTrue: true, legacyDirty: false
       });
-      expect(plan.mode).assertEqual('double');
+      expect(plan.mode).assertEqual('multi');
       expect(plan.writeMode).assertFalse();
       expect(plan.writeFlag).assertFalse();
       expect(plan.reason).assertEqual('keep-valid');
     });
 
-    it('迁移 M8：有效但标记缺失只补标记', 0, () => {
+    it('迁移 M8：有效但标记缺失只补标记（历史 triple 仍有效）', 0, () => {
       const plan = planLayoutMigration({
         enabled: true, modePersisted: true, modeValid: true, modeValue: 'triple',
         flagPersisted: false, hasLegacy: true, legacyTrue: true, legacyDirty: false
@@ -360,6 +378,7 @@ export default function paneLayoutTest() {
     it('旧键双写值：只有 single 为 true', 0, () => {
       expect(legacyForceSingleFor('single')).assertTrue();
       expect(legacyForceSingleFor('auto')).assertFalse();
+      expect(legacyForceSingleFor('multi')).assertFalse();
       expect(legacyForceSingleFor('double')).assertFalse();
       expect(legacyForceSingleFor('triple')).assertFalse();
     });
@@ -377,6 +396,11 @@ export default function paneLayoutTest() {
     it('boot 装载：脏 mode 归一为 auto', 0, () => {
       const boot = bootLayoutValues('split', 360, 360, 340, false, true);
       expect(boot.mode).assertEqual('auto');
+    });
+
+    it('boot 装载：历史 double / triple 归一为 multi', 0, () => {
+      expect(bootLayoutValues('double', 360, 360, 340, false, false).mode).assertEqual('multi');
+      expect(bootLayoutValues('triple', 360, 360, 340, false, false).mode).assertEqual('multi');
     });
 
     // ---- 资料栏派生（P0-2） ------------------------------------------------

@@ -166,8 +166,10 @@ import {
   KEY_CURRENT_NETWORK_TYPE,
   KEY_POWER_SMOOTH_TRANSITIONS,
   powerAnimationDuration,
-  powerSavingActive
+  powerSavingActive,
+  setBoolean
 } from '../../store/AppSettings';
+import { KEY_INFO_COLUMN_OPEN } from '../../util/layoutModeSettings';
 import {
   COLOR_PRIMARY, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, darkResourceMode
 } from '../../util/theme';
@@ -745,6 +747,11 @@ export struct ChatPage {
   @Require @Param screenW: number = 360;
   // 设置里的「强制单栏」。V2 读不了 AppStorage，由 ChatPageEntry 透传。
   @Require @Param forceSingleColumn: boolean = false;
+  // 解析后的实际布局（single / double / triple），同样由 ChatPageEntry 透传。
+  // 顶栏资料列开关只在 triple 时出现——用实际布局判断，不能用偏好 'multi'。
+  @Require @Param resolvedLayout: string = '';
+  // 右侧资料列的用户开合偏好；点顶栏按钮时取反并持久化。
+  @Require @Param infoColumnOpen: boolean = true;
   @Require @Param chatContentWidth: number = 360;
   private lastScreenW: number = 0;
   @Require @Param screenH: number = 780;
@@ -6616,6 +6623,15 @@ export struct ChatPage {
           chatId: this.chatId,
           menuShow: this.headerMenuShow,
           menuAnchorId: this.headerMenuId,
+          // 资料列开关：只在真正解析出第三栏时给按钮。偏好 'multi' 在窄窗会解析
+          // 成 double，此时不该出现「资料」键（点了也没地方显示）。
+          showInfoButton: this.resolvedLayout === 'triple',
+          infoOpen: this.infoColumnOpen,
+          // 点按只改偏好，由 ChatListPage 决定第三栏画不画；不回调布局解析，
+          // 否则收起/展开会触发一次无意义的重算（窗口宽度没变），画面会抖。
+          onOpenInfo: (): void => {
+            setBoolean(KEY_INFO_COLUMN_OPEN, !this.infoColumnOpen);
+          },
           onBack: (): void => { this.goBack(); },
           onMenuTap: (): void => { this.openHeaderMenu(); },
           onOpenProfile: (): void => { this.header.openProfile(); },

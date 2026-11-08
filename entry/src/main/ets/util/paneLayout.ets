@@ -19,8 +19,17 @@
 // ---- 布局模式 --------------------------------------------------------------
 
 export const LAYOUT_SINGLE: string = 'single';
+// 历史偏好别名 + resolved 有效值：'double' 仍是 resolvePaneLayout 的 effective
+// 输出（auto/平板、multi 空间不足时都会落到双栏），但用户偏好里已不再单独提供
+// 这一档——2026-11-08 起用户只选 auto / single / multi。
 export const LAYOUT_DOUBLE: string = 'double';
+// 历史偏好别名 + resolved 有效值：'triple' 是三栏实际生效的 effective 值，
+// auto 的 2in1 目标也仍返回它；用户偏好统一写 'multi'，旧值由 normalize 归一。
 export const LAYOUT_TRIPLE: string = 'triple';
+// 用户可选的「多栏」偏好（2026-11-08 三档化）：空间够就三栏，不够降双栏，再
+// 不够降单栏。用户原话「三栏只有在聊天页面会出现」，所以不再单独暴露三栏档位，
+// 第三栏本身保留，由聊天页顶栏的资料列开关控制开合。
+export const LAYOUT_MULTI: string = 'multi';
 export const LAYOUT_AUTO: string = 'auto';
 
 // 设备类型（取值与 @kit.BasicServicesKit deviceInfo.deviceType 对齐）。
@@ -194,14 +203,15 @@ export function canTriple(w: number, h: number, infoW: number, userList: number)
 
 // 主入口：偏好 + 设备 + 窗口 → 实际生效布局。
 //
-// 产品规则（用户 2026-11-08 P0 任务书 §4）：
+// 产品规则（2026-11-08 收敛为 auto / single / multi 三档）：
 //   single  始终单栏，不因平板/2in1/宽屏升级；
-//   double  空间够双栏时双栏，即使够三栏也不得自动加第三栏；
-//   triple  空间够三栏时三栏，不够降 double，再不够降 single，恢复后回三栏；
+//   multi   空间够三栏时三栏，不够降双栏，再不够降单栏，恢复后回三栏；
+//           （历史偏好 'double' / 'triple' 归一后同 multi）
 //   auto    设备只在这里参与：手机 single、平板 double、2in1 按空间 double/triple。
 //
 // 【资料栏】不接收独立的 infoOpen 参数。新布局下 infoVisible 是派生结果：
-// effective === 'triple'。KEY_INFO_VISIBLE 只在旧布局回滚路径里保留语义。
+// effective === 'triple'。聊天页顶栏的资料列开关只决定"第三栏画不画"，
+// 不参与这里解析（否则收起/展开会重算布局，窗口没变却会抖一下）。
 //
 // prevTriple 只影响 auto 的 2in1：从三栏退到双栏要跌破 1240，从双栏升到三栏要
 // 涨到 1262，中间 22vp 是防抖带。手动模式忽略它（用户已经明确表态）。
@@ -215,7 +225,9 @@ export function resolvePaneLayout(mode: string, device: string, w: number, h: nu
     return emptyResolution(LAYOUT_SINGLE, target, 'single');
   }
 
-  let wantTriple = requested === LAYOUT_TRIPLE;
+  // 'multi' 与历史别名 'triple' 都表达"有空间就要第三栏"。triple 分支必须保留：
+  // auto 路径下 requested 来自 autoTarget()，2in1 返回的仍是 'triple'。
+  let wantTriple = requested === LAYOUT_MULTI || requested === LAYOUT_TRIPLE;
   if (safeMode === LAYOUT_AUTO && requested === LAYOUT_TRIPLE) {
     wantTriple = prevTriple ? w >= AUTO_TRIPLE_EXIT_VP : w >= AUTO_TRIPLE_ENTER_VP;
   }
@@ -267,10 +279,15 @@ function emptyResolution(effective: string, target: string, reason: string): Pan
 
 // ---- 迁移 ------------------------------------------------------------------
 
-// 偏好值归一：不认识的（含历史 'split'、空串、脏值）一律 auto。
+// 偏好值归一（2026-11-08 三档化）：'double' / 'triple' 是历史别名，一律映射到
+// 'multi'——它们原本表达的"至少双栏、有空间就三栏"与 multi 完全一致，老用户
+// 升级后不该被悄悄降回双栏。其它不认识的（含历史 'split'、空串、脏值）回 auto。
 // 'auto' 是安全档——它按设备给默认，不会把用户钉在某个栏数上。
 export function normalizeLayoutMode(raw: string): string {
-  if (raw === LAYOUT_SINGLE || raw === LAYOUT_DOUBLE || raw === LAYOUT_TRIPLE || raw === LAYOUT_AUTO) {
+  if (raw === LAYOUT_MULTI || raw === LAYOUT_DOUBLE || raw === LAYOUT_TRIPLE) {
+    return LAYOUT_MULTI;
+  }
+  if (raw === LAYOUT_SINGLE || raw === LAYOUT_AUTO) {
     return raw;
   }
   return LAYOUT_AUTO;
