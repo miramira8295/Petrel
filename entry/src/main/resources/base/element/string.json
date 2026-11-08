@@ -12145,6 +12145,30 @@
       "value": "强制单栏"
     },
     {
+      "name": "settings_layout_mode",
+      "value": "布局模式"
+    },
+    {
+      "name": "settings_layout_auto",
+      "value": "自动"
+    },
+    {
+      "name": "settings_layout_single",
+      "value": "单栏"
+    },
+    {
+      "name": "settings_layout_double",
+      "value": "双栏"
+    },
+    {
+      "name": "settings_layout_triple",
+      "value": "三栏"
+    },
+    {
+      "name": "settings_layout_auto_sub",
+      "value": "自动按设备：手机单栏、平板双栏、电脑三栏；空间不足时临时降级，不改你的选择"
+    },
+    {
       "name": "chat_settings_force_single_sub",
       "value": "平板和宽屏也用手机版式，不左右分栏"
     },

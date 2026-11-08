@@ -64,7 +64,7 @@ export function readLayoutSettings(): LayoutSettingsSnapshot {
       NAV_WIDTH_TRIPLE_DEFAULT),
     infoWidth: sanitizeInfoWidth(AppStorage.get<number>(KEY_INFO_WIDTH) ?? INFO_WIDTH_DEFAULT),
     infoVisible: AppStorage.get<boolean>(KEY_INFO_VISIBLE) ?? INFO_VISIBLE_DEFAULT,
-    enabled: AppStorage.get<boolean>(KEY_LAYOUT_V2) ?? LAYOUT_V2_DEFAULT
+    enabled: true // 单一布局系统：运行时无新旧布局总开关
   };
 }
 

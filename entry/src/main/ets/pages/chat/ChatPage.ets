@@ -2176,6 +2176,8 @@ export struct ChatPage {
     const params = this.navParams;
     const route = parseChatRouteParams(params);
     this.chatId = route.chatId;
+    // 分栏第三列（资料摘要）要跟着当前会话走；只发布 id，不复制任何会话状态。
+    AppStorage.setOrCreate('activeChatId', route.chatId);
     this.threadRootId = route.threadRootId;
     // 话题模式（从 ForumTopicsPage 进入）：标题显示话题名而非"评论"。
     this.topicName = route.topicName;
@@ -3397,6 +3399,7 @@ export struct ChatPage {
   }
 
   aboutToDisappear(): void {
+    if (AppStorage.get<number>('activeChatId') === this.chatId) { AppStorage.setOrCreate('activeChatId', 0); }
     scheduleClearChatDetailHiding();
     markChatDestHidden(this.chatDestToken, true);
     this.messageActionsState.reset();

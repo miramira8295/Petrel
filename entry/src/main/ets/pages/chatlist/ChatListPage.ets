@@ -32,7 +32,8 @@ import {
   HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { titleBarStyle } from '../../util/hdsTitleBar';
-import { KEY_RESOLVED_LIST_W, KEY_RESOLVED_LAYOUT, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
+import { KEY_RESOLVED_LAYOUT, KEY_RESOLVED_LIST_W, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
+import { ProfileInfoColumn } from './ProfileInfoColumn';
 import { homeCardMarginVp } from '../../util/pageMargin';
 import { APPEARANCE_EPOCH, KEY_STATUS_FOLLOW_TITLE } from '../../util/appearance';
 import { COLOR_PRIMARY, COLOR_ICON_SECONDARY, COLOR_TEXT_SECONDARY, COLOR_TAB_SELECTED, COLOR_TAB_UNSELECTED, COLOR_BADGE_BG, COLOR_TAB_PILL_BG } from '../../util/theme';
@@ -1704,8 +1705,14 @@ export struct ChatListPage {
     return this.screenW - this.navBarW + 8;
   }
 
+  // 三栏：右侧资料列只在 resolvedLayout==='triple' 时出现，是 HdsNavigation 的兄弟。
+  private showInfoColumn(): boolean {
+    return this.resolvedLayout === 'triple';
+  }
+
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
+      Row() {
       HdsNavigation(this.chatStack) {
         Stack({ alignContent: Alignment.TopStart }) {
         Tabs({ controller: this.controller }) {
@@ -1945,12 +1952,17 @@ export struct ChatListPage {
       // 不向 HdsNavigation 绑定 Scroller，避免 HdsNavigation 挂载整窗离屏滤镜节点导致
       // 进出会话转场期间每帧整屏 FilterCache 失效、GPU 冲上 100%。
       .bindToScrollable([])
-      .width('100%').height('100%')
+      .layoutWeight(1).height('100%')
       // 背景色是 expandSafeArea 真正延伸出去的东西——只写 expandSafeArea 而不画
       // 背景，延伸的是"什么都没有"，状态栏底下露的就是窗口底色（实测深色模式
       // 下那是一条纯黑）。
       // 壁纸生效时整页底必须透明，否则壁纸被这一层盖死（见 util/theme.mainPageFill）。
       .backgroundColor(mainPageFill(this.appWallpaperOn));
+
+      if (this.showInfoColumn()) {
+        ProfileInfoColumn();
+      }
+      }.width('100%').height('100%');
 
       // 收起态的缩略块。挂在这里而不是标题栏里，理由见 collapsedFolderChip；
       // 推页时它必须跟着 navBar 一起消失，理由见 FolderChipSlot。

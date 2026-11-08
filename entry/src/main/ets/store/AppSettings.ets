@@ -33,8 +33,8 @@ import {
 } from '../util/surfaceGlass';
 import {
   INFO_WIDTH_DEFAULT, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MIGRATED_V1, KEY_LAYOUT_MODE,
-  KEY_LAYOUT_V2, KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
-  LAYOUT_V2_DEFAULT, NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues,
+  KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
+  NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues,
   legacyValueFor, planLayoutMigration
 } from '../util/layoutModeSettings';
 import type { LayoutMigrationPlan, LayoutMigrationState } from '../util/layoutModeSettings';
@@ -585,7 +585,7 @@ async function applyLayoutMigration(s: preferences.Preferences,
 }
 
 async function readLayoutMigrationState(s: preferences.Preferences): Promise<LayoutMigrationState> {
-  const enabled: boolean = await s.get(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT) as boolean;
+  const enabled: boolean = true; // 单一布局系统：启动即迁移，不再有运行时总开关
   const hasLegacy: boolean = s.hasSync(KEY_FORCE_SINGLE_COLUMN);
   const rawLegacy: preferences.ValueType = await s.get(KEY_FORCE_SINGLE_COLUMN, false);
   const legacyDirty: boolean = typeof rawLegacy !== 'boolean';
@@ -635,13 +635,12 @@ export async function initSettings(context: common.Context): Promise<void> {
       await s.get(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT) as number,
       await s.get(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT) as number,
       await s.get(KEY_INFO_VISIBLE, false) as boolean,
-      await s.get(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT) as boolean);
+      true);
     AppStorage.setOrCreate(KEY_LAYOUT_MODE, bootLayout.mode);
     AppStorage.setOrCreate(KEY_NAV_WIDTH_DOUBLE, bootLayout.navWidthDouble);
     AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, bootLayout.navWidthTriple);
     AppStorage.setOrCreate(KEY_INFO_WIDTH, bootLayout.infoWidth);
     AppStorage.setOrCreate(KEY_INFO_VISIBLE, bootLayout.infoVisible);
-    AppStorage.setOrCreate(KEY_LAYOUT_V2, bootLayout.enabled);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, await s.get(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_THREE_LINES, await s.get(KEY_THREE_LINES, false) as boolean);
     AppStorage.setOrCreate(KEY_REDUCE_ANIM, await s.get(KEY_REDUCE_ANIM, false) as boolean);
@@ -763,7 +762,6 @@ export async function initSettings(context: common.Context): Promise<void> {
     AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT);
     AppStorage.setOrCreate(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT);
     AppStorage.setOrCreate(KEY_INFO_VISIBLE, false);
-    AppStorage.setOrCreate(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT);
     AppStorage.setOrCreate(KEY_THREE_LINES, false);
     AppStorage.setOrCreate(KEY_NIGHT_MODE, NIGHT_SYSTEM);
@@ -874,9 +872,7 @@ export function setLayoutMode(mode: string): void {
   setBoolean(KEY_FORCE_SINGLE_COLUMN, legacyValueFor(safe));
   // 用户主动写过 layoutMode 就等于新配置已有效；补上迁移标记，避免下次启动
   // 再走一次「旧配置迁移」判定。
-  if (AppStorage.get<boolean>(KEY_LAYOUT_V2) ?? LAYOUT_V2_DEFAULT) {
-    persist(KEY_LAYOUT_MIGRATED_V1, true);
-  }
+  persist(KEY_LAYOUT_MIGRATED_V1, true);
 }
 
 export function setNavWidthDouble(width: number): void {
@@ -897,68 +893,9 @@ export function setInfoVisible(visible: boolean): void {
   setBoolean(KEY_INFO_VISIBLE, visible);
 }
 
-// 新布局总开关（底层原语）。业务侧不要直接调用它 —— 仅改布尔值会让页面在
-// 迁移完成前进入新布局。P1 起请用 enableLayoutV2() / disableLayoutV2()。
-export function setLayoutV2Enabled(enabled: boolean): void {
-  setBoolean(KEY_LAYOUT_V2, enabled);
-}
-
-// P1 的正式启用入口：先按真实 Preferences 状态跑一次迁移，成功后再落开关、
-// 再让 UI 读新键。失败时开关保持关闭，页面继续旧布局，不会出现"读到默认值
-// 的新布局"。写模式失败返回 false；仅标记失败不算失败（下次启动 backfill）。
-export async function enableLayoutV2(): Promise<boolean> {
-  const s: preferences.Preferences | null = store as preferences.Preferences | null;
-  if (s === null) {
-    logE('AppSettings.enableLayoutV2 skipped: preferences store is null');
-    return false;
-  }
-  try {
-    const state: LayoutMigrationState = await readLayoutMigrationState(s);
-    const forced: LayoutMigrationState = {
-      enabled: true,
-      modePersisted: state.modePersisted,
-      modeValid: state.modeValid,
-      modeValue: state.modeValue,
-      flagPersisted: state.flagPersisted,
-      hasLegacy: state.hasLegacy,
-      legacyTrue: state.legacyTrue,
-      legacyDirty: state.legacyDirty
-    };
-    const plan: LayoutMigrationPlan = planLayoutMigration(forced);
-    const modeWritten: boolean = await applyLayoutMigration(s, plan);
-    if (!modeWritten) {
-      logE(`AppSettings.enableLayoutV2 aborted: migration(mode) failed (${plan.reason})`);
-      return false;
-    }
-    await s.put(KEY_LAYOUT_V2, true);
-    await s.flush();
-    // 只有迁移与开关都成功后才发布内存状态；顺序不能反。
-    AppStorage.setOrCreate(KEY_LAYOUT_MODE, plan.mode);
-    AppStorage.setOrCreate(KEY_LAYOUT_V2, true);
-    return true;
-  } catch (e) {
-    logE(`AppSettings.enableLayoutV2 failed: ${JSON.stringify(e)}`);
-    return false;
-  }
-}
-
-// 回滚入口：只关开关，不清新配置（P0 约定：关闭时旧布局继续、新配置保留）。
-export async function disableLayoutV2(): Promise<boolean> {
-  AppStorage.setOrCreate(KEY_LAYOUT_V2, false);
-  clearResolvedLayout();
-  const s: preferences.Preferences | null = store as preferences.Preferences | null;
-  if (s === null) {
-    return true;
-  }
-  try {
-    await s.put(KEY_LAYOUT_V2, false);
-    await s.flush();
-    return true;
-  } catch (e) {
-    logE(`AppSettings.disableLayoutV2 failed: ${JSON.stringify(e)}`);
-    return false;
-  }
-}
+// 单一布局系统（2026-11-08）：运行期不再有新旧布局总开关。旧键仅作历史
+// 数据保留，页面与启动装载都不再读取它；迁移由 KEY_LAYOUT_MIGRATED_V1 保证
+// 只执行一次。
 
 function boolValue(key: string, fallback: boolean): boolean {
   return AppStorage.get<boolean>(key) ?? fallback;

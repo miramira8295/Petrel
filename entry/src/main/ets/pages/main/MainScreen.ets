@@ -10,7 +10,7 @@ import {
 } from '../../store/AppSettings';
 import { KEY_APP_DARK } from '../../util/theme';
 import { currentDeviceClass, publishLayoutState } from '../../util/layoutState';
-import { KEY_LAYOUT_MODE, KEY_LAYOUT_V2 } from '../../util/layoutModeSettings';
+import { KEY_LAYOUT_MODE } from '../../util/layoutModeSettings';
 import { navigateToSetting } from '../../util/settingsNav';
 import { appWallpaperActive, KEY_SPLIT_UNIFIED_BG } from '../../util/localWallpaper';
 import { DOCK_MODE_LEFT_FLOATING } from '../../util/splitMetrics';
@@ -122,8 +122,6 @@ export struct MainScreen {
   @StorageProp('screenWidthVp') @Watch('syncWallpaperFlag') screenW: number = 360;
   // 设置里的「强制单栏」（宽屏也当手机用）。P0 兼容键，P1 起只作旧布局回退。
   @StorageProp(KEY_FORCE_SINGLE_COLUMN) @Watch('syncWallpaperFlag') forceSingleColumn: boolean = false;
-  // P1：新多栏外壳总开关。开启后 resolvedLayout 才发布；关闭时页面走旧判据。
-  @StorageProp(KEY_LAYOUT_V2) @Watch('syncWallpaperFlag') layoutV2Enabled: boolean = false;
   // P1：布局模式变化也要重发 resolvedLayout（auto 的手动切换不伴随窗口变化）。
   @StorageProp(KEY_LAYOUT_MODE) @Watch('syncResolvedLayout') private layoutModeValue: string = 'auto';
   // 聊天页签分栏时左栏的实际宽度（vp，0 = 还没量到）。由 ChatListPage 在自己的
@@ -246,13 +244,9 @@ export struct MainScreen {
     this.syncResolvedLayout();
   }
 
-  // P1：统一发布 resolvedLayout。v2 关闭时不发布（layoutState 内部清空派生键），
-  // 页面继续走旧判据。窗口、断点、模式、实测列表宽任一变化都要重发——否则页面
-  // 读到的是上一轮的值（auto 切双栏/三栏、拖分割线、模式从 single 改 double）。
+  // 统一发布 resolvedLayout（单一布局系统，无总开关）。窗口、断点、模式、实测
+  // 列表宽任一变化都要重发，否则页面读到的是上一轮的值。
   private syncResolvedLayout(): void {
-    if (!this.layoutV2Enabled) {
-      return;
-    }
     publishLayoutState(currentDeviceClass(), this.screenW, this.screenH, this.navBarWidth);
   }
 

@@ -102,7 +102,7 @@ export function clearResolvedLayout(): void {
 export function publishLayoutState(device: string, w: number, h: number,
   actualListW: number = 0): PaneResolution {
   const snapshot: LayoutSettingsSnapshot = readLayoutSettings();
-  if (!snapshot.enabled || w <= 0 || h <= 0) {
+  if (w <= 0 || h <= 0) {
     clearResolvedLayout();
     return legacyResolution();
   }

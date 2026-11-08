@@ -5,6 +5,7 @@ import { switchAccountWithLiveWindow } from '../util/accountSwitch';
 import { common } from '@kit.AbilityKit';
 import { str } from '../util/strings';
 import { promptAction, router } from '@kit.ArkUI';
+import { stackOf, TabKind } from '../util/navStacks';
 import { AuthStage } from '../tdkit/AuthService';
 import {
   activeSummaryHasUser, canReturnToPreviousTdAccount, getAuthService, healActiveSlotIfSignedOut, returnToPreviousTdAccount
@@ -354,6 +355,13 @@ struct Index {
     });
   }
 
+  private tabKindOf(index: number): TabKind {
+    if (index === 1) { return 'contacts'; }
+    if (index === 2) { return 'settings'; }
+    if (index === 3) { return 'profile'; }
+    return 'chat';
+  }
+
   onBackPress(): boolean {
     if (collapseFloatingVideo()) { return true; }
     // 分享选择器开着时先吃掉返回键。它是画在 Index 这一层的浮层，不在
@@ -376,6 +384,14 @@ struct Index {
     // 2026-10-30：原来还有第三级「两秒内再按一次才退出」（issue #71/#48 的防误触）。
     // 用户要求去掉——回到原位后按一下就该走，不要停在这儿弹提示。
     const tab: number = AppStorage.get<number>('mainTabIndex') ?? 0;
+    // R-P1-6：返回键先交给当前页签自己的路由栈。缺了这一段，会话打开时按
+    // 系统返回键会直接退桌面（ChatPage.onBackPressed 无浮层时放行、这里也放行，
+    // 中间没有任何人 pop 栈）。
+    const currentStack = stackOf(this.tabKindOf(tab));
+    if (currentStack !== undefined && currentStack.size() > 0) {
+      currentStack.pop(true);
+      return true;
+    }
     if (tab !== 0) {
       AppStorage.setOrCreate<number>('mainTabIndex', 0);
       return true;

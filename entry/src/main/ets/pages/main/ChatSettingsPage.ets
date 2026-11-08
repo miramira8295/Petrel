@@ -1,5 +1,5 @@
 import {
-  HEIGHT_BP_LG, KEY_HEIGHT_BREAKPOINT, KEY_WINDOW_PORTRAIT, KEY_WIDTH_BREAKPOINT, WIDTH_BP_SM, isSplitByBreakpoint
+  HEIGHT_BP_LG, KEY_HEIGHT_BREAKPOINT, KEY_WINDOW_PORTRAIT, KEY_WIDTH_BREAKPOINT, WIDTH_BP_SM
 } from '../../util/layoutBreakpoint';
 import { wallpaperTakesBlur, wallpaperTakesUserDim } from '../../util/chatBackgroundRaster';
 import { router, promptAction } from '@kit.ArkUI';
@@ -10,7 +10,7 @@ import {
   BG_BLUR_DEFAULT, BG_BLUR_MAX, BG_BLUR_MIN, BG_PATTERN_DEFAULT, BG_PATTERN_MIN,
   CHAT_DIM_MAX,
   KEY_APP_BG_STATE_DARK, KEY_APP_BG_STATE_LIGHT, KEY_LOCAL_BG_DARK, KEY_LOCAL_BG_EPOCH,
-  KEY_LOCAL_BG_LIGHT, KEY_FORCE_SINGLE_COLUMN
+  KEY_LOCAL_BG_LIGHT
 } from '../../store/AppSettings';
 import {
   ChatBackgroundState, defaultChatBackgroundSnapshot, emptyChatBackground,
@@ -23,13 +23,15 @@ import {
   slotHasDim, slotIsApp, slotIsDark, wallpaperSlotKeys
 } from '../../util/wallpaperSlot';
 import { KEY_APP_DARK } from '../../util/theme';
+import { KEY_LAYOUT_MODE } from '../../util/layoutModeSettings';
+import { LAYOUT_AUTO, LAYOUT_SINGLE, LAYOUT_DOUBLE, LAYOUT_TRIPLE } from '../../util/paneLayout';
 import {
   KEY_TEXT_SIZE, KEY_BUBBLE_RADIUS, KEY_THREE_LINES, KEY_NIGHT_MODE, KEY_REDUCE_ANIM, KEY_SEND_BY_ENTER,
   KEY_POWER_SMOOTH_TRANSITIONS, KEY_IN_APP_BROWSER, KEY_HIDE_PINNED_DEFAULT,
   TEXT_SIZE_MIN, TEXT_SIZE_MAX, RADIUS_MIN, RADIUS_MAX,
   NIGHT_SYSTEM, NIGHT_DARK, NIGHT_LIGHT,
   KEY_MATERIAL_THICKNESS, KEY_MATERIAL_LIGHT,
-  powerAnimationDuration, setNumber, setBoolean, setString, setNightMode
+  powerAnimationDuration, setNumber, setBoolean, setString, setNightMode, setLayoutMode
 } from '../../store/AppSettings';
 import {
   LIGHT_ADAPTIVE, LIGHT_DEFAULT, LIGHT_EXQUISITE, LIGHT_GENTLE, LIGHT_SMOOTH,
@@ -193,6 +195,8 @@ export struct ChatSettingsPage {
   @StorageLink(KEY_MATERIAL_THICKNESS_DARK) materialThicknessDark: number = THICKNESS_DEFAULT;
   // 气泡色/文字色是 theme 里的活绑定，不是状态；预览读一次 epoch 让 ArkUI 记下依赖。
   @StorageProp(APPEARANCE_EPOCH) appearanceEpoch: number = 0;
+  // 单一布局系统：唯一控制入口（四个布局模式，见 util/paneLayout）。
+  @StorageProp(KEY_LAYOUT_MODE) private layoutMode: string = LAYOUT_AUTO;
   @StorageLink(KEY_MATERIAL_LIGHT_DARK) materialLightDark: string = LIGHT_DEFAULT;
   // 迁移前这里还有 leavingPage/leaveTimer 两个字段、一个 aboutToDisappear 清理，
   // 和一个 leavePage()：500ms 防抖 + router.back()，防的是连点两下返回箭头弹掉
@@ -665,7 +669,6 @@ export struct ChatSettingsPage {
 
   @StorageProp('screenWidthVp') private appBgScreenW: number = 360;
   // 「强制单栏」开关：本页自己也用它（壁纸预览的版式），行的显隐用几何判据。
-  @StorageProp(KEY_FORCE_SINGLE_COLUMN) private forceSingleColumn: boolean = false;
   @StorageProp('screenHeightVp') private appBgScreenH: number = 780;
   // 系统断点（util/layoutBreakpoint）：分栏判据读它，不再按窗口宽高自己算。
   @StorageProp(KEY_WIDTH_BREAKPOINT) widthBp: number = WIDTH_BP_SM;
@@ -1022,6 +1025,45 @@ export struct ChatSettingsPage {
     .width('100%').height('100%');
   }
 
+  // 布局模式：唯一入口。auto 交给 unified resolver 按设备/窗口解析；手动模式
+  // 只覆盖解析结果，不反向写偏好、不因空间不足改偏好。
+  @Builder
+  layoutModeCard() {
+    Column({ space: 10 }) {
+      Row() {
+        Text(str('settings_layout_mode')).fontSize(15).fontColor(COLOR_TEXT_PRIMARY).layoutWeight(1)
+        Text(this.layoutModeName()).fontSize(12).fontColor(COLOR_TEXT_SECONDARY)
+      }.width('100%')
+      Row({ space: 8 }) {
+        this.layoutModeChip(LAYOUT_AUTO, str('settings_layout_auto'))
+        this.layoutModeChip(LAYOUT_SINGLE, str('settings_layout_single'))
+        this.layoutModeChip(LAYOUT_DOUBLE, str('settings_layout_double'))
+        this.layoutModeChip(LAYOUT_TRIPLE, str('settings_layout_triple'))
+      }.width('100%')
+      Text(str('settings_layout_auto_sub')).fontSize(12).fontColor(COLOR_TEXT_SECONDARY)
+    }
+    .width('100%').padding(14).backgroundColor(CARD_BG).borderRadius(CARD_RADIUS)
+  }
+
+  @Builder
+  layoutModeChip(mode: string, label: ResourceStr) {
+    Text(label)
+      .fontSize(13)
+      .height(32)
+      .layoutWeight(1)
+      .textAlign(TextAlign.Center)
+      .borderRadius(16)
+      .fontColor(this.layoutMode === mode ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY)
+      .backgroundColor(this.layoutMode === mode ? $r('app.color.selected_pill') : $r('app.color.surface_alt'))
+      .onClick((): void => { setLayoutMode(mode); })
+  }
+
+  private layoutModeName(): ResourceStr {
+    if (this.layoutMode === LAYOUT_SINGLE) { return str('settings_layout_single'); }
+    if (this.layoutMode === LAYOUT_DOUBLE) { return str('settings_layout_double'); }
+    if (this.layoutMode === LAYOUT_TRIPLE) { return str('settings_layout_triple'); }
+    return str('settings_layout_auto');
+  }
   build() {
     // 放大预览要盖住整页（含标题栏），所以在最外面再包一层 Stack。
     Stack() {
@@ -1029,6 +1071,8 @@ export struct ChatSettingsPage {
       HdsSubDestination({ title: $r('app.string.settings_chat'), scroller: this.hdsScroller }) {
       Scroll(this.hdsScroller) {
         Column({ space: 14 }) {
+          this.layoutModeCard();
+
           // 字号 + 圆角, with the preview they drive.
           Column() {
             this.sliderRow(str('chat_settings_text_size'), KEY_TEXT_SIZE, TEXT_SIZE_MIN, TEXT_SIZE_MAX);
@@ -1095,14 +1139,6 @@ export struct ChatSettingsPage {
             Divider().color($r('app.color.divider')).strokeWidth(0.7).margin({ left: 16 });
             this.toggleRow(str('chat_settings_in_app_browser'),
               str('chat_settings_in_app_browser_sub'), KEY_IN_APP_BROWSER);
-            // 只有真能分栏的窗口才给这个开关——手机上它永远没作用，摆着是噪音。
-            // 判据传 false：问的是"这个窗口够不够宽"，不是"现在分没分栏"，否则
-            // 开关一打开自己就消失了。
-            if (isSplitByBreakpoint(this.widthBp, this.heightBp, false, this.windowPortrait)) {
-              Divider().color($r('app.color.divider')).strokeWidth(0.7).margin({ left: 16 });
-              this.toggleRow(str('chat_settings_force_single'),
-                str('chat_settings_force_single_sub'), KEY_FORCE_SINGLE_COLUMN);
-            }
           }
           .width('100%').backgroundColor(CARD_BG).borderRadius(CARD_RADIUS)
           .padding({ top: 4, bottom: 4 });
