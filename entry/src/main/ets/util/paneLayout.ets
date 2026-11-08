@@ -48,6 +48,11 @@ export const DOUBLE_MIN_H_VP: number = 520;
 export const AUTO_TRIPLE_ENTER_VP: number = 1262;
 export const AUTO_TRIPLE_EXIT_VP: number = 1240;
 
+// 语义别名：验收报告用 ENTER/EXIT 表述，避免读代码时把 AUTO_ 前缀当成"仅自动
+// 模式的唯一门槛"。两个常量是同一个值，改一个必须同时改另一个。
+export const TRIPLE_ENTER_W_VP: number = AUTO_TRIPLE_ENTER_VP;
+export const TRIPLE_EXIT_W_VP: number = AUTO_TRIPLE_EXIT_VP;
+
 // 三栏的 navW 下限：328 + 560 = 888。低于它时 list/chat 无论如何都有一边不达标，
 // 直接判定"不能三栏"，不要交给下面的钳制去凑一个看似合法但实际挤压的区间。
 export const TRIPLE_NAV_MIN_VP: number = 888;
@@ -69,6 +74,9 @@ export interface PaneResolution {
   listW: number;
   chatW: number;
   navW: number;
+  // 资料栏是否显示。新布局启用时必须恒等于 (effective === 'triple')，
+  // 不允许任何设备默认值或独立开关覆盖它（D-123/P0-2）。
+  infoVisible: boolean;
   // 供调试/验收报告使用，不参与 UI 分支：single / double / triple /
   // triple-degraded-no-space / double-degraded-no-space。
   reason: string;
@@ -186,10 +194,19 @@ export function canTriple(w: number, h: number, infoW: number, userList: number)
 
 // 主入口：偏好 + 设备 + 窗口 → 实际生效布局。
 //
+// 产品规则（用户 2026-11-08 P0 任务书 §4）：
+//   single  始终单栏，不因平板/2in1/宽屏升级；
+//   double  空间够双栏时双栏，即使够三栏也不得自动加第三栏；
+//   triple  空间够三栏时三栏，不够降 double，再不够降 single，恢复后回三栏；
+//   auto    设备只在这里参与：手机 single、平板 double、2in1 按空间 double/triple。
+//
+// 【资料栏】不接收独立的 infoOpen 参数。新布局下 infoVisible 是派生结果：
+// effective === 'triple'。KEY_INFO_VISIBLE 只在旧布局回滚路径里保留语义。
+//
 // prevTriple 只影响 auto 的 2in1：从三栏退到双栏要跌破 1240，从双栏升到三栏要
 // 涨到 1262，中间 22vp 是防抖带。手动模式忽略它（用户已经明确表态）。
 export function resolvePaneLayout(mode: string, device: string, w: number, h: number,
-  userList: number, infoW: number, infoOpen: boolean, prevTriple: boolean): PaneResolution {
+  userList: number, infoW: number, prevTriple: boolean): PaneResolution {
   const target = autoTarget(device);
   const safeMode = normalizeLayoutMode(mode);
   const requested = safeMode === LAYOUT_AUTO ? target : safeMode;
@@ -203,7 +220,7 @@ export function resolvePaneLayout(mode: string, device: string, w: number, h: nu
     wantTriple = prevTriple ? w >= AUTO_TRIPLE_EXIT_VP : w >= AUTO_TRIPLE_ENTER_VP;
   }
 
-  if (wantTriple && infoOpen && canTriple(w, h, infoW, userList)) {
+  if (wantTriple && canTriple(w, h, infoW, userList)) {
     const info = sanitizeInfoWidth(infoW);
     const widths = navWidths(w, info, userList);
     return {
@@ -213,6 +230,7 @@ export function resolvePaneLayout(mode: string, device: string, w: number, h: nu
       listW: widths.listW,
       chatW: widths.chatW,
       navW: widths.navW,
+      infoVisible: true,
       reason: 'triple'
     };
   }
@@ -226,6 +244,7 @@ export function resolvePaneLayout(mode: string, device: string, w: number, h: nu
       listW: widths.listW,
       chatW: widths.chatW,
       navW: widths.navW,
+      infoVisible: false,
       reason: wantTriple ? 'triple-degraded-no-space' : 'double'
     };
   }
@@ -241,6 +260,7 @@ function emptyResolution(effective: string, target: string, reason: string): Pan
     listW: 0,
     chatW: 0,
     navW: 0,
+    infoVisible: false,
     reason: reason
   };
 }
@@ -252,27 +272,6 @@ function emptyResolution(effective: string, target: string, reason: string): Pan
 export function normalizeLayoutMode(raw: string): string {
   if (raw === LAYOUT_SINGLE || raw === LAYOUT_DOUBLE || raw === LAYOUT_TRIPLE || raw === LAYOUT_AUTO) {
     return raw;
-  }
-  return LAYOUT_AUTO;
-}
-
-// 旧单开关 → 新模式的迁移（D-111，严格按 12 号任务书）：
-//   true            → single
-//   false / 缺失    → auto
-//   脏值（非布尔）  → auto
-// 已有新键时以新键为准（existingMode 非空直接返回），保证二次启动不会把用户
-// 后来选的 double/triple 又迁回 auto。
-// enabled=false（实施期 layout_v2_enabled 关闭）时不产生迁移结果。
-export function migrateLegacyLayoutMode(hasLegacy: boolean, legacyTrue: boolean,
-  legacyDirty: boolean, existingMode: string, enabled: boolean): string {
-  if (!enabled) {
-    return existingMode;
-  }
-  if (existingMode !== '') {
-    return existingMode;
-  }
-  if (hasLegacy && !legacyDirty && legacyTrue) {
-    return LAYOUT_SINGLE;
   }
   return LAYOUT_AUTO;
 }

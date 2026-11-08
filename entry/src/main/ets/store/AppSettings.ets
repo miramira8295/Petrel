@@ -32,12 +32,15 @@ import {
   SURFACE_GLASS_LEVEL_DEFAULT, SURFACE_GLASS_ON_DEFAULT
 } from '../util/surfaceGlass';
 import {
-  INFO_WIDTH_DEFAULT, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MODE, KEY_LAYOUT_V2,
-  KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT, LAYOUT_V2_DEFAULT,
-  NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues, legacyValueFor
+  INFO_WIDTH_DEFAULT, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MIGRATED_V1, KEY_LAYOUT_MODE,
+  KEY_LAYOUT_V2, KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
+  LAYOUT_V2_DEFAULT, NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues,
+  legacyValueFor, planLayoutMigration
 } from '../util/layoutModeSettings';
+import type { LayoutMigrationPlan, LayoutMigrationState } from '../util/layoutModeSettings';
 import {
-  normalizeLayoutMode, sanitizeInfoWidth, sanitizeNavWidth
+  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE, LAYOUT_TRIPLE, normalizeLayoutMode,
+  sanitizeInfoWidth, sanitizeNavWidth
 } from '../util/paneLayout';
 
 export { KEY_HIDE_PINNED_DEFAULT } from '../util/pinnedVisibilityState';
@@ -553,6 +556,66 @@ export function applyNightMode(nightMode: string): void {
   }
 }
 
+// ---- 多栏布局迁移（P0） ---------------------------------------------------
+// 只认 Preferences 的真实持久化状态（hasSync 才算存在），交给纯函数状态机
+// planLayoutMigration 决策；写盘顺序固定为「先 layoutMode、成功后再标记」。
+// 任一步失败都记录日志并保留当前状态，下次启动重新判定（见 15 号报告 C 节）。
+async function applyLayoutMigration(s: preferences.Preferences,
+  plan: LayoutMigrationPlan): Promise<void> {
+  if (plan.writeMode) {
+    try {
+      await s.put(KEY_LAYOUT_MODE, plan.mode);
+      await s.flush();
+    } catch (e) {
+      logE(`AppSettings.layoutMigration(mode=${plan.mode}) failed: ${JSON.stringify(e)}`);
+      return; // 新配置没写成功，绝不能先写迁移标记
+    }
+  }
+  if (plan.writeFlag) {
+    try {
+      await s.put(KEY_LAYOUT_MIGRATED_V1, true);
+      await s.flush();
+    } catch (e) {
+      // 配置已成功：下次启动走 backfill-flag，只补标记、不覆盖用户模式。
+      logE(`AppSettings.layoutMigration(mark) failed: ${JSON.stringify(e)}`);
+    }
+  }
+}
+
+async function readLayoutMigrationState(s: preferences.Preferences): Promise<LayoutMigrationState> {
+  const enabled: boolean = await s.get(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT) as boolean;
+  const hasLegacy: boolean = s.hasSync(KEY_FORCE_SINGLE_COLUMN);
+  const rawLegacy: preferences.ValueType = await s.get(KEY_FORCE_SINGLE_COLUMN, false);
+  const legacyDirty: boolean = typeof rawLegacy !== 'boolean';
+  const legacyTrue: boolean = rawLegacy === true;
+  const modePersisted: boolean = s.hasSync(KEY_LAYOUT_MODE);
+  const persistedMode: string = modePersisted ? await s.get(KEY_LAYOUT_MODE, '') as string : '';
+  const modeValid: boolean = persistedMode === LAYOUT_SINGLE || persistedMode === LAYOUT_DOUBLE ||
+    persistedMode === LAYOUT_TRIPLE || persistedMode === LAYOUT_AUTO;
+  return {
+    enabled: enabled,
+    modePersisted: modePersisted,
+    modeValid: modeValid,
+    modeValue: modeValid ? persistedMode : '',
+    flagPersisted: s.hasSync(KEY_LAYOUT_MIGRATED_V1),
+    hasLegacy: hasLegacy,
+    legacyTrue: legacyTrue,
+    legacyDirty: legacyDirty
+  };
+}
+
+async function runLayoutMigration(s: preferences.Preferences): Promise<LayoutMigrationPlan> {
+  try {
+    const state: LayoutMigrationState = await readLayoutMigrationState(s);
+    const plan: LayoutMigrationPlan = planLayoutMigration(state);
+    await applyLayoutMigration(s, plan);
+    return plan;
+  } catch (e) {
+    logE(`AppSettings.layoutMigration(read) failed: ${JSON.stringify(e)}`);
+    return { mode: LAYOUT_AUTO, writeMode: false, writeFlag: false, reason: 'read-error' };
+  }
+}
+
 // Load everything into AppStorage. Call once at startup, before the first page
 // renders, so components never flash the default value.
 export async function initSettings(context: common.Context): Promise<void> {
@@ -562,15 +625,10 @@ export async function initSettings(context: common.Context): Promise<void> {
     const s = store as preferences.Preferences;
     AppStorage.setOrCreate(KEY_TEXT_SIZE, await s.get(KEY_TEXT_SIZE, TEXT_SIZE_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_SPLIT_NAV_WIDTH, await s.get(KEY_SPLIT_NAV_WIDTH, 0) as number);
-    // 多栏布局（P0）：启动装载只写 AppStorage，不落盘。旧 true→single、
-    // false/缺失/脏值→auto；已有新键则以新键为准。判据见 util/paneLayout。
-    const hasLegacy: boolean = s.hasSync(KEY_FORCE_SINGLE_COLUMN);
-    const rawLegacy: preferences.ValueType = await s.get(KEY_FORCE_SINGLE_COLUMN, false);
-    const legacyDirty: boolean = typeof rawLegacy !== 'boolean';
-    const legacyTrue: boolean = rawLegacy === true;
-    const existingMode: string = s.hasSync(KEY_LAYOUT_MODE)
-      ? await s.get(KEY_LAYOUT_MODE, LAYOUT_MODE_DEFAULT) as string : '';
-    const bootLayout = bootLayoutValues(hasLegacy, legacyTrue, legacyDirty, existingMode,
+    // 多栏布局（P0）：先按真实 Preferences 状态决定是否迁移（含失败恢复），
+    // 再写 AppStorage。迁移写盘必须 await，否则无法区分「写成功」「写失败」。
+    const migrationPlan: LayoutMigrationPlan = await runLayoutMigration(s);
+    const bootLayout = bootLayoutValues(migrationPlan.mode,
       await s.get(KEY_NAV_WIDTH_DOUBLE, NAV_WIDTH_DOUBLE_DEFAULT) as number,
       await s.get(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT) as number,
       await s.get(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT) as number,
@@ -812,6 +870,11 @@ export function setLayoutMode(mode: string): void {
   const safe = normalizeLayoutMode(mode);
   setString(KEY_LAYOUT_MODE, safe);
   setBoolean(KEY_FORCE_SINGLE_COLUMN, legacyValueFor(safe));
+  // 用户主动写过 layoutMode 就等于新配置已有效；补上迁移标记，避免下次启动
+  // 再走一次「旧配置迁移」判定。
+  if (AppStorage.get<boolean>(KEY_LAYOUT_V2) ?? LAYOUT_V2_DEFAULT) {
+    persist(KEY_LAYOUT_MIGRATED_V1, true);
+  }
 }
 
 export function setNavWidthDouble(width: number): void {
@@ -826,10 +889,14 @@ export function setInfoWidth(width: number): void {
   setNumber(KEY_INFO_WIDTH, sanitizeInfoWidth(width));
 }
 
+// 兼容键：新布局启用后资料栏由 resolvedLayout 派生（见 effectiveInfoVisible），
+// 不再读这个开关。保留写入只用于旧布局回滚路径；P1 接线时不要再用它控制第三列。
 export function setInfoVisible(visible: boolean): void {
   setBoolean(KEY_INFO_VISIBLE, visible);
 }
 
+// 新布局总开关。当前没有用户开关（实施期由构建/调试配置控制）；P1 接线时必须
+// 在切换为 true 之后显式执行一次迁移（runLayoutMigration），再让 UI 消费新键。
 export function setLayoutV2Enabled(enabled: boolean): void {
   setBoolean(KEY_LAYOUT_V2, enabled);
 }
