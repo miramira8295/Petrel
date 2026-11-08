@@ -67,7 +67,9 @@ import { navigateToSearch } from '../../util/searchNav';
 import {
   requestChatListFlush, setChatListRenderActive
 } from '../../util/chatListRenderGate';
-import { rememberSplitNavWidth, resolveSplitNavWidth } from '../../util/splitNavWidth';
+import { rememberSplitNavWidth } from '../../util/splitNavWidth';
+import { paneNavMax, paneNavMin, paneNavWidth } from '../../util/paneNavWidth';
+import { KEY_INFO_WIDTH } from '../../util/layoutModeSettings';
 
 interface TabSpec {
   key: string;
@@ -569,26 +571,26 @@ export struct ChatListPage {
       : isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
   }
 
-  // v2 下左栏宽由状态层发布；未发布（首帧/异常）时回退旧比例算法。
-  private effectiveNavMin(): number {
-    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
-      return this.resolvedListW;
-    }
-    return this.navBarMinWidth();
+  // 全应用共用一条可拖动的左栏分隔线：宽度只记一份（KEY_SPLIT_NAV_WIDTH），
+  // 区间随窗口宽/是否三栏（三栏要给右资料列与聊天留空间）变化。
+  private navTriple(): boolean {
+    return this.resolvedLayout === 'triple';
+  }
+
+  private navInfoW(): number {
+    return AppStorage.get<number>(KEY_INFO_WIDTH) ?? 340;
   }
 
   private effectiveNavMax(): number {
-    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
-      return this.resolvedListW;
-    }
-    return this.navBarMaxWidth();
+    return paneNavMax(this.screenW, this.navTriple(), this.navInfoW());
+  }
+
+  private effectiveNavMin(): number {
+    return paneNavMin(this.effectiveNavMax());
   }
 
   private effectiveNavWidth(): number {
-    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
-      return this.resolvedListW;
-    }
-    return resolveSplitNavWidth(this.savedNavW, this.navBarMinWidth(), this.navBarMaxWidth());
+    return paneNavWidth(this.savedNavW, this.effectiveNavMin(), this.effectiveNavMax());
   }
 
   private singleColDetailCoversNavBar(): boolean {
