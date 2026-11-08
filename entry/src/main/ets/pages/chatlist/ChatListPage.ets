@@ -69,7 +69,17 @@ import {
 } from '../../util/chatListRenderGate';
 import { rememberSplitNavWidth } from '../../util/splitNavWidth';
 import { paneNavMax, paneNavMin, paneNavWidth } from '../../util/paneNavWidth';
-import { KEY_INFO_WIDTH } from '../../util/layoutModeSettings';
+import { KEY_INFO_WIDTH, KEY_INFO_COLUMN_OPEN } from '../../util/layoutModeSettings';
+import { ArchivePage } from './ArchivePage';
+import { MyProfilePage } from '../main/MyProfilePage';
+import {
+  closeLeftPane,
+  KEY_LEFT_PANE_MODE,
+  LEFT_PANE_ARCHIVE,
+  LEFT_PANE_CHATS,
+  LEFT_PANE_PROFILE
+} from '../../util/leftPaneState';
+import { KEY_MAIN_TAB } from '../../util/chatNav';
 
 interface TabSpec {
   key: string;
@@ -329,6 +339,12 @@ export struct ChatListPage {
   // P1-B2：新版布局状态。v2 未接管时为空串，所有判据回退旧断点逻辑。
   @StorageProp(KEY_RESOLVED_LAYOUT) private resolvedLayout: string = '';
   @StorageProp(KEY_RESOLVED_LIST_W) private resolvedListW: number = 0;
+  // 聊天页右侧资料列的用户开合偏好（默认开）。它只决定第三栏画不画，
+  // **不**参与布局解析——否则收起/展开会触发一次无意义的重新解析。
+  @StorageProp(KEY_INFO_COLUMN_OPEN) private infoColumnOpen: boolean = true;
+  // 左栏钻取态（04:205/206）：'chats' 常态，'archive' / 'profile' 时这一栏换成
+  // 归档或自己的资料，中栏聊天不动。手机永远停在 'chats'（openLeftPane 自己拒）。
+  @StorageProp(KEY_LEFT_PANE_MODE) @Watch('onLeftPaneChanged') private leftPane: string = LEFT_PANE_CHATS;
   // 小方形屏上滑时隐藏标题栏（SPEC-04，写入方是 MainTabBody 的滚动回调）。
   @StorageProp(KEY_IMMERSIVE_BARS_HIDDEN) immersiveHidden: boolean = false;
   // 文件夹条是否收成了标题底下那一小块（util/folderBarCollapse，2026-10-30）。
@@ -573,8 +589,10 @@ export struct ChatListPage {
 
   // 全应用共用一条可拖动的左栏分隔线：宽度只记一份（KEY_SPLIT_NAV_WIDTH），
   // 区间随窗口宽/是否三栏（三栏要给右资料列与聊天留空间）变化。
+  // 资料列被用户收起时右列不占宽，按"双栏"给上限——否则收起后列表左栏仍然
+  // 被窄上限卡着，白白浪费刚还回来的空间。
   private navTriple(): boolean {
-    return this.resolvedLayout === 'triple';
+    return this.resolvedLayout === 'triple' && this.infoColumnOpen;
   }
 
   private navInfoW(): number {
@@ -1708,8 +1726,68 @@ export struct ChatListPage {
   }
 
   // 三栏：右侧资料列只在 resolvedLayout==='triple' 时出现，是 HdsNavigation 的兄弟。
+  // 用户还能用聊天页顶栏的资料列开关临时收起它（infoColumnOpen，持久化偏好）。
   private showInfoColumn(): boolean {
-    return this.resolvedLayout === 'triple';
+    // 左栏正在显示「自己的资料」时，资料列要让位（04:206：中栏保持当前聊天、
+    // 资料列隐藏）——那块地方本来就是同一份东西的另一个壳，两块并排只会重复。
+    if (this.paneIsProfile()) {
+      return false;
+    }
+    // 必须三栏并且用户没把它收起；单栏/双栏根本没有承载第三列的位置。
+    return this.infoColumnOpen && this.resolvedLayout === 'triple';
+  }
+
+  // P1-B7：左栏钻取态是否正在生效。**必须同时要求分栏**：窗口一旦降级成单栏
+  // （手机、平板竖屏、强制单栏开关），左栏钻取就没有承载它的地方，此时立刻退回
+  // 「归档 / 个人资料整页」的老路，绝不把面板画到手机窗口上。
+  private paneActive(): boolean {
+    return this.splitActive() && this.leftPane !== LEFT_PANE_CHATS;
+  }
+
+  private paneIsProfile(): boolean {
+    return this.paneActive() && this.leftPane === LEFT_PANE_PROFILE;
+  }
+
+  private paneIsArchive(): boolean {
+    return this.paneActive() && this.leftPane === LEFT_PANE_ARCHIVE;
+  }
+
+  // 左栏换了形态：论坛抽屉占的是同一块地方，两者不能叠着显示。
+  private onLeftPaneChanged(): void {
+    if (this.leftPane !== LEFT_PANE_CHATS) {
+      closeForumDrawer();
+    }
+  }
+
+  // 左栏资料页里的「设置」行：退出钻取态，切到设置页签。设置页在多栏下仍然是
+  // 整窗页（它没有左/中栏结构），所以这里不留在左栏。
+  private openSettingsFromPane(): void {
+    closeLeftPane();
+    // 2 = 设置页签（MainScreen 里 TabContent 的顺序：会话/联系人/设置/个人资料）。
+    AppStorage.setOrCreate<number>(KEY_MAIN_TAB, 2);
+  }
+
+  // 左栏钻取态的壳。铺满 navBar 内容区，也就是会话列表原来占的那一栏。
+  // 归档与个人资料共用这个壳，具体渲染谁由 leftPane 决定。
+  @Builder
+  paneContent() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.paneIsArchive()) {
+        // 归档：自带「‹ 会话」返回条，返回 = 左栏回列表（中栏聊天不动）。
+        ArchivePage({ paneMode: true });
+      } else {
+        // 个人资料：整份组件搬进左栏，编辑信息等子页在这条栏内继续钻取。
+        MyProfilePage({
+          active: true,
+          paneMode: true,
+          onOpenSettings: (): void => { this.openSettingsFromPane(); }
+        });
+      }
+    }
+    .width('100%').height('100%')
+    // 和上面几层一致：放开裁剪，内容才能画到标题栏底下去（标题栏此时是藏着的，
+    // 但 navBar 的高度是按"没有标题栏"给的，多留一层裁剪只会切掉列表顶部）。
+    .clip(true);
   }
 
   build() {
@@ -1882,11 +1960,21 @@ export struct ChatListPage {
       })
       .width('100%').height('100%')
       .clip(false)
+      // 左栏钻取态开着时，列表必须**撤掉**而不是被盖住：列表自己也是透明底（壁纸
+      // 从 AppBackdrop 透上来），叠在面板底下会从面板的透明处露出来，看着像两层
+      // 糊在一起（2026-11-08 真机实测）。Hidden 保留布局与状态，只不画不点。
+      .visibility(this.paneActive() ? Visibility.Hidden : Visibility.Visible)
+      .enabled(!this.paneActive())
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM]);
 
         ForumSplitView({
           navBarVisible: this.navBarVisible
         });
+        // P1-B7：左栏钻取态（归档 / 个人资料）盖在会话列表上，但只盖左栏——
+        // 中栏聊天是 HdsNavigation 的 content，完全不受影响。
+        if (this.paneActive()) {
+          this.paneContent();
+        }
         }
         .width('100%')
         .height('100%')
@@ -1949,7 +2037,9 @@ export struct ChatListPage {
       .attributeModifier(SHEET_LIFECYCLE_MODIFIER)
       .titleMode(HdsNavigationTitleMode.MINI)
       // 小方形屏沉浸式浏览（SPEC-04）：上滑收起标题栏，带动画。
-      .hideTitleBar(this.immersiveHidden && isSmallSquare(this.widthBp, this.heightBp), true)
+      // 左栏钻取态自带标题条（归档那条「‹ 会话 / 归档」，个人资料页自己有 HDS 标题栏），
+      // 外面这条「Petrel + 搜索 + ⋮」必须让位，否则一条栏里叠两层标题。
+      .hideTitleBar(this.paneActive() || (this.immersiveHidden && isSmallSquare(this.widthBp, this.heightBp)), true)
       // 标题栏已固定为静态透明 MINI 栏（文件夹条收起由 onScrollForFolderBar 独立驱动），
       // 不向 HdsNavigation 绑定 Scroller，避免 HdsNavigation 挂载整窗离屏滤镜节点导致
       // 进出会话转场期间每帧整屏 FilterCache 失效、GPU 冲上 100%。
@@ -1970,7 +2060,7 @@ export struct ChatListPage {
       // 推页时它必须跟着 navBar 一起消失，理由见 FolderChipSlot。
       // **箭头函数不能省**：直接写 `content: this.collapsedFolderChip` 的话，
       // @Builder 里的 this 会变成子组件，这里读的 @State 全都落空、还不报错。
-      if (this.folderBarCollapsed && this.folders.length > 0) {
+      if (this.folderBarCollapsed && this.folders.length > 0 && !this.paneActive()) {
         FolderChipSlot({ content: (): void => { this.collapsedFolderChip(); } });
       }
 

@@ -37,6 +37,7 @@ import unreadMentionSessionTest from './UnreadMentionSession.test';
 import localUnitTest from './LocalUnit.test';
 import paneLayoutTest from './PaneLayout.test';
 import layoutStateTest from './LayoutState.test';
+import leftPaneStateTest from './LeftPaneState.test';
 import crashRecordStoreTest from './CrashRecordStore.test';
 import materialTuningTest from './MaterialTuning.test';
 import adminLabelTest from './AdminLabel.test';
@@ -428,6 +429,7 @@ export default function testsuite() {
   localUnitTest();
   paneLayoutTest();
   layoutStateTest();
+  leftPaneStateTest();
   materialTuningTest();
   adminLabelTest();
   botStartTest();

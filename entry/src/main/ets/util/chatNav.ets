@@ -11,6 +11,7 @@ import {
   HEIGHT_BP_LG, KEY_HEIGHT_BREAKPOINT, KEY_WIDTH_BREAKPOINT, KEY_WINDOW_PORTRAIT, WIDTH_BP_SM, isSplitByBreakpoint
 } from './layoutBreakpoint';
 import { setChatListRenderActive } from './chatListRenderGate';
+import { isLeftPaneOpen, leftPaneMode } from './leftPaneState';
 import { routeTopicId } from './messageTopicScope';
 
 // 聊天详情页目的地的名字。此前十个调用点各自写了一遍这个字符串、各自直接
@@ -104,6 +105,13 @@ export function navigateToChat(
   // 首屏预取：在页面还没建之前就把第一页要出来（见 util/chatPrefetch 的说明）。
   // 这里是**十个入口唯一的漏斗**，挂一处就覆盖列表/搜索/通知/深链全部。
   startInitialPagePrefetch(params);
+  // 【2026-11-09 用户改口】打开会话**不再**收起左栏钻取面板。
+  //
+  // 原实现按 04:205 的「点归档内会话 → 中栏打开、左栏退出归档并恢复原列表」，
+  // 在这里调了 closeLeftPane()。用户 2026-11-09 明确要求反过来：在「已归档的聊天」
+  // 里点开会话时，左栏要**继续停在归档列表**，只有他自己点 ‹ 返回才退出归档。
+  // 也就是说归档列表是中栏的“并列面板”，不是一次性跳板。
+  // 保留注释是为了让后面看代码的人知道这里曾经有过一次改向，不要再按老文档改回去。
   const stack: NavStackLike | undefined = stackOf('chat');
   if (stack === undefined) {
     // 栈还没注册（冷启动那一瞬：Index 在 stage 刚变 Ready 的同一拍就消费通知，
@@ -141,8 +149,18 @@ export function navigateToChat(
     AppStorage.get<boolean>(KEY_FORCE_SINGLE_COLUMN) ?? false,
     AppStorage.get<boolean>(KEY_WINDOW_PORTRAIT) ?? true);
   const snap: StackFrame[] = snapshotOf(stack, chatFrameKey);
+  // 【2026-11-09 用户报的"无限返回"】分栏左栏停在归档列表时，连续点开几个会话
+  // 会一层层叠在**中栏栈**上：返回手势不是在退归档，而是在一个个往回翻之前开
+  // 过的会话，翻到底才回到空态。
+  //
+  // 左栏还露着列表，语义就应该是"换一个会话看"，而不是"往里再钻一层"——这正是
+  // splitRouting.decideChatPush 的 replaceExisting 分支要的（它本来就是为
+  // "平板左栏点多个会话、右栏叠出多个页面"写的）。原来只有 origin==='navbar'
+  // 才算，归档面板里的行是走 origin='content' 进来的，于是漏了。这里把"左栏
+  // 钻取面板开着"也算进同一类：此时点会话一律替换，不叠加。
+  const paneOpen: boolean = isLeftPaneOpen(leftPaneMode());
   const decision: ChatPushDecision =
-    decideChatPush(snap, target, origin === 'navbar', origin === 'search');
+    decideChatPush(snap, target, origin === 'navbar' || paneOpen, origin === 'search');
   // **skip / popTo 这两条路不传参**：栈帧的 param 不会因为出栈而更新，已经挂在
   // 树上的那个 ChatPage 不会重新吃一遍 pathInfo。所以 jumpTo 得走旁路交过去，
   // 否则「资料页点媒体」「搜索到已打开会话里的消息」都只是回到那一页、停在

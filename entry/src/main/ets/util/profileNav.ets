@@ -6,6 +6,7 @@ import { CHAT_TAB_INDEX, KEY_MAIN_TAB } from './chatNav';
 import { logE } from './log';
 import { KEY_RESOLVED_LAYOUT } from './layoutBreakpoint';
 import { isOverlayBypassed, openProfileOverlay } from './profileOverlay';
+import { LEFT_PANE_ARCHIVE, leftPaneSplitActive, openLeftPane } from './leftPaneState';
 
 // 聊天页签栈里**除会话详情之外**的目的地漏斗：用户资料页、群/频道资料页、
 // 话题列表、归档列表。会话详情自己有 chatNav.ets，形状与本文件一致。
@@ -182,9 +183,20 @@ export function navigateToDirectMessagesTopics(
     params, origin, 'chat');
 }
 
-// 归档会话列表。同样是 'navbar'：入口在 MainTabBody（会话列表第 0 行），
-// 是左栏里的一次选择，右栏该被替换而不是被叠加。
+// 归档会话列表。
+//
+// 单栏（手机）：'navbar'，入口在 MainTabBody（会话列表第 0 行），是左栏里的一次
+// 选择，右栏该被替换而不是被叠加——行为与改造前完全一致。
+//
+// 多栏（平板/电脑）：归档改走**左栏钻取态**（04:205 / D-108）：左栏列表原地换成
+// 归档列表（自带「‹ 会话」返回），中栏聊天与（三栏时的）资料列都不动。这颗态由
+// util/leftPaneState 统一管理，不再往聊天页签栈里推页面——推页面会把中栏的聊天
+// 整个换成归档列表，那正是本次要改掉的行为。
 export function navigateToArchive(): void {
+  if (leftPaneSplitActive()) {
+    openLeftPane(LEFT_PANE_ARCHIVE);
+    return;
+  }
   pushInto(ARCHIVE_DEST_NAME, ARCHIVE_PAGE_URL, undefined, 'navbar', 'chat');
 }
 
