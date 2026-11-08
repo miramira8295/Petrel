@@ -38,6 +38,7 @@ import {
   legacyValueFor, planLayoutMigration
 } from '../util/layoutModeSettings';
 import type { LayoutMigrationPlan, LayoutMigrationState } from '../util/layoutModeSettings';
+import { clearResolvedLayout } from '../util/layoutState';
 import {
   LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_SINGLE, LAYOUT_TRIPLE, normalizeLayoutMode,
   sanitizeInfoWidth, sanitizeNavWidth
@@ -561,14 +562,14 @@ export function applyNightMode(nightMode: string): void {
 // planLayoutMigration 决策；写盘顺序固定为「先 layoutMode、成功后再标记」。
 // 任一步失败都记录日志并保留当前状态，下次启动重新判定（见 15 号报告 C 节）。
 async function applyLayoutMigration(s: preferences.Preferences,
-  plan: LayoutMigrationPlan): Promise<void> {
+  plan: LayoutMigrationPlan): Promise<boolean> {
   if (plan.writeMode) {
     try {
       await s.put(KEY_LAYOUT_MODE, plan.mode);
       await s.flush();
     } catch (e) {
       logE(`AppSettings.layoutMigration(mode=${plan.mode}) failed: ${JSON.stringify(e)}`);
-      return; // 新配置没写成功，绝不能先写迁移标记
+      return false; // 新配置没写成功，绝不能先写迁移标记
     }
   }
   if (plan.writeFlag) {
@@ -580,6 +581,7 @@ async function applyLayoutMigration(s: preferences.Preferences,
       logE(`AppSettings.layoutMigration(mark) failed: ${JSON.stringify(e)}`);
     }
   }
+  return true;
 }
 
 async function readLayoutMigrationState(s: preferences.Preferences): Promise<LayoutMigrationState> {
@@ -895,10 +897,67 @@ export function setInfoVisible(visible: boolean): void {
   setBoolean(KEY_INFO_VISIBLE, visible);
 }
 
-// 新布局总开关。当前没有用户开关（实施期由构建/调试配置控制）；P1 接线时必须
-// 在切换为 true 之后显式执行一次迁移（runLayoutMigration），再让 UI 消费新键。
+// 新布局总开关（底层原语）。业务侧不要直接调用它 —— 仅改布尔值会让页面在
+// 迁移完成前进入新布局。P1 起请用 enableLayoutV2() / disableLayoutV2()。
 export function setLayoutV2Enabled(enabled: boolean): void {
   setBoolean(KEY_LAYOUT_V2, enabled);
+}
+
+// P1 的正式启用入口：先按真实 Preferences 状态跑一次迁移，成功后再落开关、
+// 再让 UI 读新键。失败时开关保持关闭，页面继续旧布局，不会出现"读到默认值
+// 的新布局"。写模式失败返回 false；仅标记失败不算失败（下次启动 backfill）。
+export async function enableLayoutV2(): Promise<boolean> {
+  const s: preferences.Preferences | null = store as preferences.Preferences | null;
+  if (s === null) {
+    logE('AppSettings.enableLayoutV2 skipped: preferences store is null');
+    return false;
+  }
+  try {
+    const state: LayoutMigrationState = await readLayoutMigrationState(s);
+    const forced: LayoutMigrationState = {
+      enabled: true,
+      modePersisted: state.modePersisted,
+      modeValid: state.modeValid,
+      modeValue: state.modeValue,
+      flagPersisted: state.flagPersisted,
+      hasLegacy: state.hasLegacy,
+      legacyTrue: state.legacyTrue,
+      legacyDirty: state.legacyDirty
+    };
+    const plan: LayoutMigrationPlan = planLayoutMigration(forced);
+    const modeWritten: boolean = await applyLayoutMigration(s, plan);
+    if (!modeWritten) {
+      logE(`AppSettings.enableLayoutV2 aborted: migration(mode) failed (${plan.reason})`);
+      return false;
+    }
+    await s.put(KEY_LAYOUT_V2, true);
+    await s.flush();
+    // 只有迁移与开关都成功后才发布内存状态；顺序不能反。
+    AppStorage.setOrCreate(KEY_LAYOUT_MODE, plan.mode);
+    AppStorage.setOrCreate(KEY_LAYOUT_V2, true);
+    return true;
+  } catch (e) {
+    logE(`AppSettings.enableLayoutV2 failed: ${JSON.stringify(e)}`);
+    return false;
+  }
+}
+
+// 回滚入口：只关开关，不清新配置（P0 约定：关闭时旧布局继续、新配置保留）。
+export async function disableLayoutV2(): Promise<boolean> {
+  AppStorage.setOrCreate(KEY_LAYOUT_V2, false);
+  clearResolvedLayout();
+  const s: preferences.Preferences | null = store as preferences.Preferences | null;
+  if (s === null) {
+    return true;
+  }
+  try {
+    await s.put(KEY_LAYOUT_V2, false);
+    await s.flush();
+    return true;
+  } catch (e) {
+    logE(`AppSettings.disableLayoutV2 failed: ${JSON.stringify(e)}`);
+    return false;
+  }
 }
 
 function boolValue(key: string, fallback: boolean): boolean {
