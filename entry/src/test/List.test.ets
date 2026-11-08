@@ -35,6 +35,7 @@ import viewerUnderlayTest from './ViewerUnderlay.test';
 import videoProgressClockTest from './VideoProgressClock.test';
 import unreadMentionSessionTest from './UnreadMentionSession.test';
 import localUnitTest from './LocalUnit.test';
+import paneLayoutTest from './PaneLayout.test';
 import crashRecordStoreTest from './CrashRecordStore.test';
 import materialTuningTest from './MaterialTuning.test';
 import adminLabelTest from './AdminLabel.test';
@@ -424,6 +425,7 @@ export default function testsuite() {
   sessionSecurityTest();
   crashRecordStoreTest();
   localUnitTest();
+  paneLayoutTest();
   materialTuningTest();
   adminLabelTest();
   botStartTest();

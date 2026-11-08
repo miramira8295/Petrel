@@ -31,6 +31,14 @@ import {
   BUBBLE_GLASS_ON_DEFAULT,
   SURFACE_GLASS_LEVEL_DEFAULT, SURFACE_GLASS_ON_DEFAULT
 } from '../util/surfaceGlass';
+import {
+  INFO_WIDTH_DEFAULT, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MODE, KEY_LAYOUT_V2,
+  KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT, LAYOUT_V2_DEFAULT,
+  NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues, legacyValueFor
+} from '../util/layoutModeSettings';
+import {
+  normalizeLayoutMode, sanitizeInfoWidth, sanitizeNavWidth
+} from '../util/paneLayout';
 
 export { KEY_HIDE_PINNED_DEFAULT } from '../util/pinnedVisibilityState';
 export { KEY_VIDEO_AUTO_PRELOAD } from '../util/videoPreloadSetting';
@@ -554,6 +562,26 @@ export async function initSettings(context: common.Context): Promise<void> {
     const s = store as preferences.Preferences;
     AppStorage.setOrCreate(KEY_TEXT_SIZE, await s.get(KEY_TEXT_SIZE, TEXT_SIZE_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_SPLIT_NAV_WIDTH, await s.get(KEY_SPLIT_NAV_WIDTH, 0) as number);
+    // 多栏布局（P0）：启动装载只写 AppStorage，不落盘。旧 true→single、
+    // false/缺失/脏值→auto；已有新键则以新键为准。判据见 util/paneLayout。
+    const hasLegacy: boolean = s.hasSync(KEY_FORCE_SINGLE_COLUMN);
+    const rawLegacy: preferences.ValueType = await s.get(KEY_FORCE_SINGLE_COLUMN, false);
+    const legacyDirty: boolean = typeof rawLegacy !== 'boolean';
+    const legacyTrue: boolean = rawLegacy === true;
+    const existingMode: string = s.hasSync(KEY_LAYOUT_MODE)
+      ? await s.get(KEY_LAYOUT_MODE, LAYOUT_MODE_DEFAULT) as string : '';
+    const bootLayout = bootLayoutValues(hasLegacy, legacyTrue, legacyDirty, existingMode,
+      await s.get(KEY_NAV_WIDTH_DOUBLE, NAV_WIDTH_DOUBLE_DEFAULT) as number,
+      await s.get(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT) as number,
+      await s.get(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT) as number,
+      await s.get(KEY_INFO_VISIBLE, false) as boolean,
+      await s.get(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT) as boolean);
+    AppStorage.setOrCreate(KEY_LAYOUT_MODE, bootLayout.mode);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_DOUBLE, bootLayout.navWidthDouble);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, bootLayout.navWidthTriple);
+    AppStorage.setOrCreate(KEY_INFO_WIDTH, bootLayout.infoWidth);
+    AppStorage.setOrCreate(KEY_INFO_VISIBLE, bootLayout.infoVisible);
+    AppStorage.setOrCreate(KEY_LAYOUT_V2, bootLayout.enabled);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, await s.get(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_THREE_LINES, await s.get(KEY_THREE_LINES, false) as boolean);
     AppStorage.setOrCreate(KEY_REDUCE_ANIM, await s.get(KEY_REDUCE_ANIM, false) as boolean);
@@ -669,6 +697,13 @@ export async function initSettings(context: common.Context): Promise<void> {
     AppStorage.setOrCreate(KEY_HOLD_SPEED_LIMIT, HOLD_SPEED_LIMIT_DEFAULT);
     AppStorage.setOrCreate(KEY_TEXT_SIZE, TEXT_SIZE_DEFAULT);
     AppStorage.setOrCreate(KEY_SPLIT_NAV_WIDTH, 0);
+    // 多栏布局缺省：持久层不可用时也必须让 UI 有确定值（panel 不闪 undefined）。
+    AppStorage.setOrCreate(KEY_LAYOUT_MODE, LAYOUT_MODE_DEFAULT);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_DOUBLE, NAV_WIDTH_DOUBLE_DEFAULT);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT);
+    AppStorage.setOrCreate(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT);
+    AppStorage.setOrCreate(KEY_INFO_VISIBLE, false);
+    AppStorage.setOrCreate(KEY_LAYOUT_V2, LAYOUT_V2_DEFAULT);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT);
     AppStorage.setOrCreate(KEY_THREE_LINES, false);
     AppStorage.setOrCreate(KEY_NIGHT_MODE, NIGHT_SYSTEM);
@@ -767,6 +802,36 @@ export function setString(key: string, value: string): void {
   AppStorage.setOrCreate(key, value);
   mirrorChatEnvKey(key, value);
   persist(key, value);
+}
+
+// --- 多栏布局（P0） --------------------------------------------------------
+// 用户改布局模式时必须双写旧键：P0–P4 期间 13 个旧页面仍读
+// KEY_FORCE_SINGLE_COLUMN，不双写它们会与设置页显示相反。只有 single 写 true，
+// 其它三档写 false。
+export function setLayoutMode(mode: string): void {
+  const safe = normalizeLayoutMode(mode);
+  setString(KEY_LAYOUT_MODE, safe);
+  setBoolean(KEY_FORCE_SINGLE_COLUMN, legacyValueFor(safe));
+}
+
+export function setNavWidthDouble(width: number): void {
+  setNumber(KEY_NAV_WIDTH_DOUBLE, sanitizeNavWidth(width, NAV_WIDTH_DOUBLE_DEFAULT));
+}
+
+export function setNavWidthTriple(width: number): void {
+  setNumber(KEY_NAV_WIDTH_TRIPLE, sanitizeNavWidth(width, NAV_WIDTH_TRIPLE_DEFAULT));
+}
+
+export function setInfoWidth(width: number): void {
+  setNumber(KEY_INFO_WIDTH, sanitizeInfoWidth(width));
+}
+
+export function setInfoVisible(visible: boolean): void {
+  setBoolean(KEY_INFO_VISIBLE, visible);
+}
+
+export function setLayoutV2Enabled(enabled: boolean): void {
+  setBoolean(KEY_LAYOUT_V2, enabled);
 }
 
 function boolValue(key: string, fallback: boolean): boolean {
