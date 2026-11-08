@@ -19,6 +19,7 @@ import { ChatEntry, effectiveMuted } from '../../store/ChatEntry';
 import { CHAT_ROW_VERTICAL_GUTTER, ChatRow } from './ChatRow';
 import { ChatRowSpec, chatRowSpec } from '../../util/chatRowMetrics';
 import { KEY_FORCE_SINGLE_COLUMN } from '../../store/AppSettings';
+import { KEY_RESOLVED_LAYOUT, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
 import { KEY_APP_BG_ON } from '../../store/AppSettings';
 import { MATERIAL_EPOCH } from '../../util/overlayMaterial';
 import {
@@ -119,6 +120,15 @@ export struct MainTabBody {
   // 「隐藏 / 显示」真的翻转时才写一次 AppStorage，滚动过程中不触发任何重绘。
   private immersive: ImmersiveBarsState = new ImmersiveBarsState();
   @StorageProp(KEY_FORCE_SINGLE_COLUMN) private forceSingleColumn: boolean = false;
+  @StorageProp(KEY_RESOLVED_LAYOUT) private resolvedLayout: string = '';
+
+  // P1-B2：行档位判据与 ChatListPage/ChatListView 共用同一入口。
+  private splitActive(): boolean {
+    const r: string = this.resolvedLayout;
+    return resolvedLayoutActive(r)
+      ? resolvedSplitActive(r)
+      : isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
+  }
   // “所有”页使用独立列表组件，也要单独响应底栏重复点击（issue #35）。
   @StorageProp(TAB_RETAP_EPOCH) @Watch('onTabReTap') tabReTapEpoch: number = 0;
   private topVisible: boolean = true;
@@ -573,7 +583,7 @@ export struct MainTabBody {
 
   // 当前档位：手机（含平板强制单栏）紧凑 60，平板分栏宽松 72。
   private spec(): ChatRowSpec {
-    return chatRowSpec(isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait));
+    return chatRowSpec(this.splitActive());
   }
 
   // 归档入口和会话行一样高，跟着档位走。
@@ -758,7 +768,7 @@ export struct MainTabBody {
       LazyForEach(this.chatsData, (item: ChatListRowState) => {
         ListItem() {
           ChatRow({
-          compact: !isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait),
+          compact: !this.splitActive(),
             row: item,
             listKey: 'main',
             liveEffects: this.liveEffects(),

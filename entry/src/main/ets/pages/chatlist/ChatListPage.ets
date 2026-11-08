@@ -32,6 +32,7 @@ import {
   HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode, TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { titleBarStyle } from '../../util/hdsTitleBar';
+import { KEY_RESOLVED_LIST_W, KEY_RESOLVED_LAYOUT, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
 import { homeCardMarginVp } from '../../util/pageMargin';
 import { APPEARANCE_EPOCH, KEY_STATUS_FOLLOW_TITLE } from '../../util/appearance';
 import { COLOR_PRIMARY, COLOR_ICON_SECONDARY, COLOR_TEXT_SECONDARY, COLOR_TAB_SELECTED, COLOR_TAB_UNSELECTED, COLOR_BADGE_BG, COLOR_TAB_PILL_BG } from '../../util/theme';
@@ -322,6 +323,9 @@ export struct ChatListPage {
   @StorageProp(KEY_WIDTH_BREAKPOINT) widthBp: number = WIDTH_BP_SM;
   @StorageProp(KEY_HEIGHT_BREAKPOINT) heightBp: number = HEIGHT_BP_LG;
   @StorageProp(KEY_WINDOW_PORTRAIT) windowPortrait: boolean = true;
+  // P1-B2：新版布局状态。v2 未接管时为空串，所有判据回退旧断点逻辑。
+  @StorageProp(KEY_RESOLVED_LAYOUT) private resolvedLayout: string = '';
+  @StorageProp(KEY_RESOLVED_LIST_W) private resolvedListW: number = 0;
   // 小方形屏上滑时隐藏标题栏（SPEC-04，写入方是 MainTabBody 的滚动回调）。
   @StorageProp(KEY_IMMERSIVE_BARS_HIDDEN) immersiveHidden: boolean = false;
   // 文件夹条是否收成了标题底下那一小块（util/folderBarCollapse，2026-10-30）。
@@ -556,8 +560,38 @@ export struct ChatListPage {
     }
   }
 
+  // P1-B2：本页唯一的布局判据入口。v2 接管时读 resolvedLayout，否则回退旧断点判据。
+  private splitActive(): boolean {
+    const r: string = this.resolvedLayout;
+    return resolvedLayoutActive(r)
+      ? resolvedSplitActive(r)
+      : isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
+  }
+
+  // v2 下左栏宽由状态层发布；未发布（首帧/异常）时回退旧比例算法。
+  private effectiveNavMin(): number {
+    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
+      return this.resolvedListW;
+    }
+    return this.navBarMinWidth();
+  }
+
+  private effectiveNavMax(): number {
+    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
+      return this.resolvedListW;
+    }
+    return this.navBarMaxWidth();
+  }
+
+  private effectiveNavWidth(): number {
+    if (resolvedLayoutActive(this.resolvedLayout) && this.resolvedListW > 0) {
+      return this.resolvedListW;
+    }
+    return resolveSplitNavWidth(this.savedNavW, this.navBarMinWidth(), this.navBarMaxWidth());
+  }
+
   private singleColDetailCoversNavBar(): boolean {
-    return !isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait)
+    return !this.splitActive()
       && this.chatStack.size() > 0
       && this.chatDetailShown
       && !(AppStorage.get<boolean>('chatDetailHiding') ?? false);
@@ -598,7 +632,7 @@ export struct ChatListPage {
   }
 
   private viewerHidesNavBar(): boolean {
-    return this.viewerCoversWindow && isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
+    return this.viewerCoversWindow && this.splitActive();
   }
 
   @State private newSessionCount: number = 0;
@@ -1739,7 +1773,7 @@ export struct ChatListPage {
         if (AppStorage.get<number>(NAV_BAR_WIDTH_KEY) !== this.tabsWidth) {
           AppStorage.setOrCreate<number>(NAV_BAR_WIDTH_KEY, this.tabsWidth);
           // 拖过分割线就记下来，下次启动复原（issue #106）。
-          rememberSplitNavWidth(this.tabsWidth, isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait));
+          rememberSplitNavWidth(this.tabsWidth, this.splitActive());
         }
       })
       // Content swipe in progress: convert the swipe offset into a fractional
@@ -1885,12 +1919,12 @@ export struct ChatListPage {
       // 所以分栏由我们自己说了算：isSplitByBreakpoint 读系统横向 + 纵向断点，
       // 手机横屏（md 宽 + 横向窗口）也判单栏（util/layoutBreakpoint）。
       // 显式给 mode 还有一个好处——分栏与否不再依赖某个 SDK 版本的内部阈值。
-      .mode(isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait) ? NavigationMode.Split : NavigationMode.Stack)
+      .mode(this.splitActive() ? NavigationMode.Split : NavigationMode.Stack)
       // 分栏下查看器开着：Split + hideNavBar(true) 的实际效果是单栏，右栏会话页铺满窗口（#201）。
       .hideNavBar(this.viewerHidesNavBar())
-      .navBarWidthRange({ minWidth: this.navBarMinWidth(), maxWidth: this.navBarMaxWidth() })
+      .navBarWidthRange({ minWidth: this.effectiveNavMin(), maxWidth: this.effectiveNavMax() })
       // 启动时复原上次拖出来的宽度；没记过就是 min（HDS 的静息值）。
-      .navBarWidth(resolveSplitNavWidth(this.savedNavW, this.navBarMinWidth(), this.navBarMaxWidth()))
+      .navBarWidth(this.effectiveNavWidth())
       // 右栏栈空时的占位。仅分栏模式展示，手机单栏下永不出现。
       .splitPlaceholder(this.placeholderContent())
       .minContentWidth(this.contentMinWidth())

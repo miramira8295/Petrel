@@ -9,6 +9,7 @@ import { getChatStore, getFolderStore } from '../../tdkit/Globals';
 import { ChatEntry } from '../../store/ChatEntry';
 import { ChatRow } from './ChatRow';
 import { KEY_FORCE_SINGLE_COLUMN } from '../../store/AppSettings';
+import { KEY_RESOLVED_LAYOUT, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
 import { ChatListDataSource } from './ChatListDataSource';
 import { ChatListRowKeyCache } from './chatListRowKeys';
 import { guardKey } from '../../util/keyGuard';
@@ -51,6 +52,15 @@ export struct ChatListView {
   @StorageProp(KEY_HEIGHT_BREAKPOINT) heightBp: number = HEIGHT_BP_LG;
   @StorageProp(KEY_WINDOW_PORTRAIT) windowPortrait: boolean = true;
   @StorageProp(KEY_FORCE_SINGLE_COLUMN) private forceSingleColumn: boolean = false;
+  @StorageProp(KEY_RESOLVED_LAYOUT) private resolvedLayout: string = '';
+
+  // P1-B2：行密度判据与 ChatListPage/MainTabBody 共用同一入口，避免三处不一致。
+  private splitActive(): boolean {
+    const r: string = this.resolvedLayout;
+    return resolvedLayoutActive(r)
+      ? resolvedSplitActive(r)
+      : isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
+  }
   // 行滑动操作的开关（交互设置）。关着时不挂 swipeAction，横向手势留给切文件夹。
   @StorageProp(KEY_ROW_SWIPE_ACTIONS) rowSwipeEnabled: boolean = false;
   @Prop effectsActive: boolean = true;
@@ -691,7 +701,7 @@ export struct ChatListView {
         LazyForEach(this.chatsData, (item: ChatListRowState) => {
           ListItem() {
             ChatRow({
-              compact: !isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait),
+              compact: !this.splitActive(),
               row: item,
               listKey: this.listKey,
               liveEffects: this.liveEffects(),
