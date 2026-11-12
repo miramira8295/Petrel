@@ -6,6 +6,8 @@ import { switchAccountWithLiveWindow } from '../util/accountSwitch';
 import { common } from '@kit.AbilityKit';
 import { str } from '../util/strings';
 import { promptAction, router } from '@kit.ArkUI';
+import { stackOf, TabKind } from '../util/navStacks';
+import { closeProfileOverlay, isProfileOverlayOpen } from '../util/profileOverlay';
 import { AuthStage } from '../tdkit/AuthService';
 import {
   activeSummaryHasUser, canReturnToPreviousTdAccount, getAuthService, healActiveSlotIfSignedOut, returnToPreviousTdAccount
@@ -36,6 +38,8 @@ import {
 import { resetShareTargets } from '../services/ShareTargetService';
 import { clearRecentOutgoing } from '../util/recentOutgoing';
 import { closeForumDrawer } from '../util/forumDrawerState';
+import { closeLeftPane, isLeftPaneOpen, LEFT_PANE_ARCHIVE, LEFT_PANE_PROFILE, leftPaneMode } from '../util/leftPaneState';
+import { ensureNavKey } from '../util/navState';
 import { SharedPayload, previewOf } from '../util/sharedContent';
 
 // 冷启动时等连接就绪的上限。超过就照常放行——离线时压着链接不处理更糟。
@@ -79,6 +83,11 @@ struct Index {
   private deepLinkTimer: number = -1;
 
   aboutToAppear(): void {
+    // 主屏的页签改成了 @StorageProp（只读镜像），要求 AppStorage 里已经有
+    // 'mainTabIndex' 这个键；改动前它是 MainScreen 的 @StorageLink 在装配时
+    // 顺带 setOrCreate 出来的。这里在主屏 build 之前建好，行为与改动前等价。
+    // 见 util/navState.ensureNavKey 的说明。
+    ensureNavKey();
     this.bindAuthService();
     this.offConn = getTdClient().onUpdate('updateConnectionState', (u: TdObject): void => {
       const st: TdObject | undefined = u['state'] as TdObject | undefined;
@@ -355,8 +364,20 @@ struct Index {
     });
   }
 
+  private tabKindOf(index: number): TabKind {
+    if (index === 1) { return 'contacts'; }
+    if (index === 2) { return 'settings'; }
+    if (index === 3) { return 'profile'; }
+    return 'chat';
+  }
+
   onBackPress(): boolean {
     if (collapseFloatingVideo()) { return true; }
+    // P1-B4：双栏资料浮层卡开着时，返回键先关卡片（严格模态，不穿透到背景栈）。
+    if (isProfileOverlayOpen()) {
+      closeProfileOverlay();
+      return true;
+    }
     // 分享选择器开着时先吃掉返回键。它是画在 Index 这一层的浮层，不在
     // Navigation 的栈里——不拦的话返回键会去弹 Navigation 的目的地，
     // 抽屉留在原地不动（用户实测"不受返回键控制"）。
@@ -377,10 +398,50 @@ struct Index {
     // 2026-10-30：原来还有第三级「两秒内再按一次才退出」（issue #71/#48 的防误触）。
     // 用户要求去掉——回到原位后按一下就该走，不要停在这儿弹提示。
     const tab: number = AppStorage.get<number>('mainTabIndex') ?? 0;
+    // 左栏钻取态（归档 / 自己的资料）排在中栏栈之前——06 号规范的返回优先级是
+    // 弹层 → 浮层卡 → 资料列 → 左栏钻取 → 中栏栈 → 页面栈。面板自己还有页内栈
+    // （资料页里的编辑子页）时先出栈，出不动了才关面板。
+    //
+    // 合法组合（pane 与 tab 的配比）由 util/navState 唯一决定，见它的 I1–I3。
+    // 本函数不在这里重新判一遍：左栏态只读 leftPaneState，页签递退（下面那处
+    // tab !== 0）只表达"想回会话"，合法性由 MainScreen 的 @Watch 送进
+    // navState.reconcile() 收口。顺序（资料列 → 左栏 → 中栏栈）一个字没动。
+    const paneMode: string = leftPaneMode();
+    if (isLeftPaneOpen(paneMode)) {
+      if (paneMode === LEFT_PANE_PROFILE) {
+        const paneStack = stackOf('profile');
+        if (paneStack !== undefined && paneStack.size() > 0) {
+          paneStack.pop(true);
+          return true;
+        }
+      }
+      // 【2026-11-09 用户要求】归档列表点开会话后左栏要**继续停在归档**（见
+      // util/chatNav.navigateToChat 的注释），所以这时"返回"要先退出中栏那个
+      // 会话、回到归档列表，再按一次才关归档面板；否则用户刚点开的会话按返回
+      // 反而把归档整个收掉，回到会话列表。资料面板不受影响（它没有中栏并列页）。
+      if (paneMode === LEFT_PANE_ARCHIVE) {
+        const chatStack = stackOf('chat');
+        if (chatStack !== undefined && chatStack.size() > 0) {
+          chatStack.pop(true);
+          return true;
+        }
+      }
+      closeLeftPane();
+      return true;
+    }
+    // R-P1-6：返回键先交给当前页签自己的路由栈。缺了这一段，会话打开时按
+    // 系统返回键会直接退桌面（ChatPage.onBackPressed 无浮层时放行、这里也放行，
+    // 中间没有任何人 pop 栈）。
+    const currentStack = stackOf(this.tabKindOf(tab));
+    if (currentStack !== undefined && currentStack.size() > 0) {
+      currentStack.pop(true);
+      return true;
+    }
     if (tab !== 0) {
       AppStorage.setOrCreate<number>('mainTabIndex', 0);
       return true;
     }
+    // 左栏钻取态已在上面处理（含面板自己的页内栈），这里不再重复。
     if (closeForumDrawer()) {
       return true;
     }

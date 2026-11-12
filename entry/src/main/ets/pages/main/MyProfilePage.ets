@@ -126,6 +126,11 @@ export struct MyProfilePage {
   }
 
   @Prop active: boolean = false;
+  // 左栏壳：多栏时不再切到第 4 个页签，而是把同一份资料铺在会话列表栏里
+  // （04:206 / D-109：个人资料只占左栏，中栏保持当前聊天，资料列隐藏）。
+  // 组件本身、导航结构、子页（编辑信息）全部复用，唯一差别是别去动页签级的
+  // AppStorage 键——见 build() 里 onNavBarStateChange 的说明。
+  @Prop paneMode: boolean = false;
   onOpenSettings: () => void = (): void => {};
   @StorageProp('topSafeHeight') topSafe: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafe: number = 0;
@@ -2185,7 +2190,12 @@ export struct MyProfilePage {
 
     .onNavBarStateChange((isVisible: boolean): void => {
       if (!isVisible) { this.closeQr(); }
-      AppStorage.setOrCreate<boolean>(PROFILE_NAV_BAR_VISIBLE_KEY, isVisible);
+      // 左栏壳不写页签级的「资料栏可见」键。这个键是 MainScreen 用来判第 4 个
+      // 页签的胶囊宽度/显隐的；左栏壳和页签壳此刻是**两个实例**，后触发的那个
+      // 会覆盖先触发的，页签那边的胶囊就会按错误的值去算。
+      if (!this.paneMode) {
+        AppStorage.setOrCreate<boolean>(PROFILE_NAV_BAR_VISIBLE_KEY, isVisible);
+      }
     })
     // 关掉全模态联动：默认 true 时，bindSheet / bindContentCover 一拉起就会触发
     // 栈顶 HdsNavDestination 的 onHidden。**此刻它是个空操作**——本页自己没有

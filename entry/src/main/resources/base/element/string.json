@@ -8369,9 +8369,42 @@
       "value": "取消静音"
     },
     {
+      "name": "profile_tab_title",
+      "value": "资料"
+    },
+        {
+      "name": "profile_action_message",
+      "value": "消息"
+    },
+    {
+      "name": "profile_complete",
+      "value": "完整资料"
+    },
+    {
+      "name": "profile_row_notifications",
+      "value": "通知"
+    },
+    {
+      "name": "cp_muted",
+      "value": "已静音"
+    },
+    {
+      "name": "cp_notifications_on",
+      "value": "已开启"
+    },
+    {
+      "name": "cpp_user",
+      "value": "用户"
+    },
+    {
+      "name": "cpp_secret_chat",
+      "value": "私密聊天"
+    },
+    {
       "name": "cp_mute",
       "value": "静音"
     },
+
     {
       "name": "cp_auto_delete",
       "value": "自动删除消息"
@@ -8779,6 +8812,10 @@
     {
       "name": "cp_more_actions",
       "value": "更多聊天操作"
+    },
+    {
+      "name": "cp_chat_info",
+      "value": "会话信息"
     },
     {
       "name": "cp_bot_commands",
@@ -12145,6 +12182,34 @@
       "value": "强制单栏"
     },
     {
+      "name": "settings_layout_mode",
+      "value": "布局模式"
+    },
+    {
+      "name": "settings_layout_auto",
+      "value": "自动"
+    },
+    {
+      "name": "settings_layout_single",
+      "value": "单栏"
+    },
+    {
+      "name": "settings_layout_double",
+      "value": "双栏"
+    },
+    {
+      "name": "settings_layout_triple",
+      "value": "三栏"
+    },
+    {
+      "name": "settings_layout_multi",
+      "value": "多栏"
+    },
+    {
+      "name": "settings_layout_auto_sub",
+      "value": "自动按设备：手机单栏、平板双栏、电脑三栏；空间不足时临时降级，不改你的选择"
+    },
+    {
       "name": "chat_settings_force_single_sub",
       "value": "平板和宽屏也用手机版式，不左右分栏"
     },
@@ -13370,3 +13435,4 @@
     }
   ]
 }
+

@@ -47,7 +47,9 @@ import { SHEET_LIFECYCLE_MODIFIER } from '../../util/navSheetLifecycle';
 import { SplitPlaceholderHolder } from '../../util/splitPlaceholderHolder';
 import { KEY_APP_DARK } from '../../util/theme';
 
-import { rememberSplitNavWidth, resolveSplitNavWidth } from '../../util/splitNavWidth';
+import { rememberSplitNavWidth } from '../../util/splitNavWidth';
+import { paneNavMax, paneNavMin, paneNavWidth } from '../../util/paneNavWidth';
+import { KEY_INFO_WIDTH } from '../../util/layoutModeSettings';
 import { APPEARANCE_EPOCH } from '../../util/appearance';
 import { mainPageFill } from '../../util/theme';
 import { KEY_APP_BG_ON } from '../../store/AppSettings';
@@ -555,6 +557,25 @@ export struct SettingsPage {
   private contentMinWidth(): number {
     return splitContentMinWidth(this.screenW);
   }
+
+  // 全应用共用一条可拖动分隔线：宽度记在 KEY_SPLIT_NAV_WIDTH；
+  // 区间随是否三栏变化（三栏要给右侧资料列与聊天留空间）。
+  private paneTriple(): boolean {
+    return (AppStorage.get<string>('resolvedLayout') ?? '') === 'triple';
+  }
+
+  private paneNavMaxW(): number {
+    return paneNavMax(this.screenW, this.paneTriple(), AppStorage.get<number>(KEY_INFO_WIDTH) ?? 340);
+  }
+
+  private paneNavMinW(): number {
+    return paneNavMin(this.paneNavMaxW());
+  }
+
+  private paneNavStartW(): number {
+    return paneNavWidth(this.savedNavW, this.paneNavMinW(), this.paneNavMaxW());
+  }
+
 
   // splitPlaceholder 收的是 ComponentContent，不是 @Builder 引用——直接传
   // this.xxx 那种写法编译不过。懒建一次：build 每帧都跑，在这里 new 就是
@@ -1619,9 +1640,9 @@ export struct SettingsPage {
       // 手机横屏（md 宽 + 横向窗口）也判单栏（util/layoutBreakpoint）。
       // 显式给 mode 还有一个好处——分栏与否不再依赖某个 SDK 版本的内部阈值。
       .mode(isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait) ? NavigationMode.Split : NavigationMode.Stack)
-      .navBarWidthRange({ minWidth: this.navBarMinWidth(), maxWidth: this.navBarMaxWidth() })
+      .navBarWidthRange({ minWidth: this.paneNavMinW(), maxWidth: this.paneNavMaxW() })
       // 启动时复原上次拖出来的宽度；没记过就是 min（HDS 的静息值）。
-      .navBarWidth(resolveSplitNavWidth(this.savedNavW, this.navBarMinWidth(), this.navBarMaxWidth()))
+      .navBarWidth(this.paneNavStartW())
       // 右栏栈空时的占位。仅分栏模式展示，手机单栏下永不出现。
       .splitPlaceholder(this.placeholderContent())
       .minContentWidth(this.contentMinWidth())
@@ -1652,3 +1673,5 @@ export struct SettingsPage {
     }
   }
 }
+
+

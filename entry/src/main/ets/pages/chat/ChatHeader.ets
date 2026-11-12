@@ -40,6 +40,11 @@ import { emojiStatusVisible } from '../../util/emojiStatus';
 export const CHAT_HEADER_ACTION_SIZE: number = 42;
 export const CHAT_HEADER_RADIUS: number = 22;
 
+// 侧栏图标外框的圆角。历史实现（另一仓 b9c21a9）用的是 design/tokens 里的
+// RADIUS_BAR；本仓没有那份 tokens，而图标只有 18×14，圆角 3 就是它原本的
+// 视觉比例，直接给字面量，避免为一个数字新建一份 token。
+const INFO_ICON_RADIUS: number = 3;
+
 // 状态管理 V2（B2 批：六个 V1 宿主迁 @ComponentV2）。迁移本身不为性能——它是
 // **前置**：V1 @Component 既不能声明 @Param，也订阅不了 @ObservedV2 类上的
 // @Trace，后面「宿主接收控制器实例、在自己的 build() 里读 @Trace」那一整套
@@ -99,7 +104,13 @@ export struct ChatHeader {
   @Param menuShow: boolean = false;
   // 菜单浮层的锚点。promptAction.openMenu 按组件 id 定位，所以这颗键要挂上它。
   @Param menuAnchorId: string = '';
-  // 四个回调一律 @Event：调用点传的是内联箭头函数，页面每重建一次都是新闭包，
+  // 右侧资料列开关。只在 resolvedLayout === 'triple'（真的解析出第三栏）时由
+  // ChatPage 传 true；单栏/双栏没有地方显示资料列，不出现这颗键。注意判据是
+  // 实际布局而不是偏好 'multi'——multi 在窄窗会降成 double。
+  @Param showInfoButton: boolean = false;
+  // 资料列当前开合态：只用来把图标描边染成 accent 色。
+  @Param infoOpen: boolean = false;
+  // 五个回调一律 @Event：调用点传的是内联箭头函数，页面每重建一次都是新闭包，
   // 若用 @Param，那个 `!==` 恒不相等会让本层跟着页面的每一次重建白刷一遍；
   // @Event 不具备观测能力，正好复现迁移前「普通字段只在构造时赋值一次」的行为。
   // 空实现默认值是仓库惯例（让组件能脱离父组件独立预览）。（B2 迁移）
@@ -107,6 +118,9 @@ export struct ChatHeader {
   @Event onMenuTap: () => void = (): void => {};
   @Event onOpenProfile: () => void = (): void => {};
   @Event onResolveIdentity: () => void = (): void => {};
+  // 点按资料列开关：只翻转偏好，不触发布局重算（收起/展开不该让窗口宽度
+  // 重新解析一遍，否则画面会抖）。
+  @Event onOpenInfo: () => void = (): void => {};
 
   // 返回 / 菜单两颗键的按压态、菜单图标的展开态，全部显式驱动（2026-09-15）。
   //
@@ -121,6 +135,7 @@ export struct ChatHeader {
   // surface_alt 会让玻璃"闪一下变实心"），按压反馈由 opacity + scale 表达。
   @Local private backPressed: boolean = false;
   @Local private menuPressed: boolean = false;
+  @Local private infoPressed: boolean = false;
   @Local private menuIconOpen: boolean = false;
   @Local private typingDotPhase: number = 0;
   private typingAnimTimer: number = -1;
@@ -385,6 +400,57 @@ export struct ChatHeader {
     .onClick((): void => { this.onMenuTap(); });
   }
 
+  // 资料列开关（「▯｜」）：18×14 圆角描边矩形 + 一条 1.4 宽竖线。竖线偏右
+  // （x=11.6）表达"右侧还有一列"，展开时描边与竖线一起染成 accent 色。
+  //
+  // 为什么自绘：系统符号库里没有「面板 + 分隔线」这个形状（list_bullet 是项目
+  // 符号），只有自绘才能和旧多栏方案的图标逐像素对齐。玻璃、阴影、按压反馈
+  // 与返回/菜单两颗键保持同一套写法（2026-11-08 恢复旧方案）。
+  @Builder
+  infoButton() {
+    Row() {
+      Stack() {
+        Column()
+          .width(18)
+          .height(14)
+          .borderRadius(INFO_ICON_RADIUS)
+          .border({
+            width: 1.4,
+            color: this.infoOpen ? this.accent() : chromeTextColorOf(this.onLightBg, this.onDarkBg)
+          });
+        Column()
+          .width(1.4)
+          .height(11.2)
+          .backgroundColor(this.infoOpen ? this.accent() : chromeTextColorOf(this.onLightBg, this.onDarkBg))
+          .position({ x: 11.6, y: 1.4 });
+      }
+      .width(18)
+      .height(14);
+    }
+    .width(CHAT_HEADER_ACTION_SIZE)
+    .height(CHAT_HEADER_ACTION_SIZE)
+    .borderRadius(CHAT_HEADER_RADIUS)
+    .justifyContent(FlexAlign.Center)
+    .shadow({ radius: this.appDark ? 0 : 4, color: this.appDark ? '#00000000' : '#12000000', offsetX: 0, offsetY: this.appDark ? 0 : 1 })
+    .backgroundColor(this.actionFill(this.infoPressed))
+    .opacity(this.infoPressed ? 0.72 : 1)
+    .scale({ x: this.infoPressed ? 0.9 : 1, y: this.infoPressed ? 0.9 : 1 })
+    .backdropBlur(plainBackdropBlur('bar'))
+    .visualEffect(hdsVisualEffect('bar', !this.appDark))
+    .border({ width: this.appDark ? 1 : 0, color: '#33FFFFFF', style: BorderStyle.Solid })
+    .clip(this.appDark)
+    .onTouch((event: TouchEvent): void => {
+      const edge: number = this.pressEdge(event);
+      if (edge >= 0 && (edge === 1) !== this.infoPressed) {
+        this.animatePress((): void => {
+          this.infoPressed = edge === 1;
+        });
+      }
+    })
+    .accessibilityText(str('cp_chat_info'))
+    .onClick((): void => { this.onOpenInfo(); });
+  }
+
   build() {
     Row({ space: 8 }) {
       this.backButton();
@@ -492,6 +558,10 @@ export struct ChatHeader {
           this.onOpenProfile();
         }
       });
+      // 资料列开关夹在身份胶囊与 ⋮ 之间：和另外两颗动作键同尺寸，视觉上一组。
+      if (this.showInfoButton) {
+        this.infoButton();
+      }
       this.menuButton();
     }
     .width('100%')

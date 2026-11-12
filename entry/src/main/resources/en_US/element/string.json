@@ -8369,9 +8369,42 @@
       "value": "Unmute"
     },
     {
+      "name": "profile_tab_title",
+      "value": "Profile"
+    },
+        {
+      "name": "profile_action_message",
+      "value": "Message"
+    },
+    {
+      "name": "profile_complete",
+      "value": "Full profile"
+    },
+    {
+      "name": "profile_row_notifications",
+      "value": "Notifications"
+    },
+    {
+      "name": "cp_muted",
+      "value": "Muted"
+    },
+    {
+      "name": "cp_notifications_on",
+      "value": "On"
+    },
+    {
+      "name": "cpp_user",
+      "value": "User"
+    },
+    {
+      "name": "cpp_secret_chat",
+      "value": "Secret chat"
+    },
+    {
       "name": "cp_mute",
       "value": "Mute"
     },
+
     {
       "name": "cp_auto_delete",
       "value": "Auto-delete messages"
@@ -8779,6 +8812,10 @@
     {
       "name": "cp_more_actions",
       "value": "More chat actions"
+    },
+    {
+      "name": "cp_chat_info",
+      "value": "Info"
     },
     {
       "name": "cp_bot_commands",
@@ -12145,6 +12182,34 @@
       "value": "Force single column"
     },
     {
+      "name": "settings_layout_mode",
+      "value": "Layout mode"
+    },
+    {
+      "name": "settings_layout_auto",
+      "value": "Auto"
+    },
+    {
+      "name": "settings_layout_single",
+      "value": "Single"
+    },
+    {
+      "name": "settings_layout_double",
+      "value": "Double"
+    },
+    {
+      "name": "settings_layout_triple",
+      "value": "Triple"
+    },
+    {
+      "name": "settings_layout_multi",
+      "value": "Multi-column"
+    },
+    {
+      "name": "settings_layout_auto_sub",
+      "value": "Auto follows device: phone single, tablet double, desktop triple. Temporarily downgraded when space is short; your choice is kept."
+    },
+    {
       "name": "chat_settings_force_single_sub",
       "value": "Use the phone layout on tablets and wide screens"
     },
@@ -13370,3 +13435,4 @@
     }
   ]
 }
+

@@ -492,8 +492,9 @@ export struct StreamingVideoPlayer {
       if (rangeServer !== null) { closeSources.push((): void => { rangeServer.close(); }); }
       if (tdSource !== null) { closeSources.push((): void => { tdSource.close(); }); }
       if (session !== null) { closeSources.push((): void => { session.close(); }); }
-      // Avoid the plugin's native async-work release path. The shared queue
-      // keeps teardown ordered and closes these detached sources only on success.
+      // 2026-11-09：改用**同步** release（插件 releaseAsync 的线程池回调会在实例
+      // 销毁之后才执行，IjkMediaPlayer_release() 里对 id_ 的 std::string 拷贝读到
+      // 已释放内存 —— 真机栈：memcpy ← IjkMediaPlayer_release+148 ← AsyncWorkCallback）。
       this.pendingRelease = enqueueNativeReleaseSync(
         player === null ? null : (): void => { player.release(); }, closeSources)
         .catch((error: Error): void => {
@@ -1107,7 +1108,7 @@ export struct StreamingVideoPlayer {
     }
     this.seekFeedbackSide = side;
     this.seekFeedbackVisible = false;
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
+    animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
       this.seekFeedbackVisible = true;
     });
     if (!this.holdRewind.active) {
@@ -1121,7 +1122,7 @@ export struct StreamingVideoPlayer {
     }
     this.seekFeedbackTimer = setTimeout((): void => {
       this.seekFeedbackTimer = -1;
-      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
         this.seekFeedbackVisible = false;
       });
     }, 520);
@@ -1307,7 +1308,7 @@ export struct StreamingVideoPlayer {
       this.speedFeedbackTimer = -1;
     }
     this.speedFeedbackText = str('player_speed', `${speed}x`);
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
+    animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
       this.speedFeedbackVisible = true;
     });
   }
@@ -1336,7 +1337,7 @@ export struct StreamingVideoPlayer {
         logW(`StreamingVideoPlayer.seek after key-only failed: ${e}`);
       }
     }
-    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       this.speedFeedbackVisible = false;
     });
   }
@@ -1359,12 +1360,12 @@ export struct StreamingVideoPlayer {
     }
     this.speedFeedbackText = text;
     this.speedFeedbackVisible = false;
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
+    animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
       this.speedFeedbackVisible = true;
     });
     this.speedFeedbackTimer = setTimeout((): void => {
       this.speedFeedbackTimer = -1;
-      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
         this.speedFeedbackVisible = false;
       });
     }, 850);

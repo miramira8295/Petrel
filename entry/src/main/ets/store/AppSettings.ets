@@ -31,6 +31,18 @@ import {
   BUBBLE_GLASS_ON_DEFAULT,
   SURFACE_GLASS_LEVEL_DEFAULT, SURFACE_GLASS_ON_DEFAULT
 } from '../util/surfaceGlass';
+import {
+  INFO_WIDTH_DEFAULT, KEY_INFO_COLUMN_OPEN, KEY_INFO_VISIBLE, KEY_INFO_WIDTH, KEY_LAYOUT_MIGRATED_V1,
+  KEY_LAYOUT_MODE, KEY_NAV_WIDTH_DOUBLE, KEY_NAV_WIDTH_TRIPLE, LAYOUT_MODE_DEFAULT,
+  NAV_WIDTH_DOUBLE_DEFAULT, NAV_WIDTH_TRIPLE_DEFAULT, bootLayoutValues,
+  legacyValueFor, planLayoutMigration
+} from '../util/layoutModeSettings';
+import type { LayoutMigrationPlan, LayoutMigrationState } from '../util/layoutModeSettings';
+import { clearResolvedLayout } from '../util/layoutState';
+import {
+  LAYOUT_AUTO, LAYOUT_DOUBLE, LAYOUT_MULTI, LAYOUT_SINGLE, LAYOUT_TRIPLE, normalizeLayoutMode,
+  sanitizeInfoWidth, sanitizeNavWidth
+} from '../util/paneLayout';
 
 export { KEY_HIDE_PINNED_DEFAULT } from '../util/pinnedVisibilityState';
 export { KEY_VIDEO_AUTO_PRELOAD } from '../util/videoPreloadSetting';
@@ -444,7 +456,10 @@ const DATA_BOOLEAN_TRUE_DEFAULTS: string[] = [
   // 音乐/语音/直播默认续播（符合平台惯例）；视频默认不续播。
   KEY_BG_PLAY_MUSIC,
   KEY_BG_PLAY_VOICE,
-  KEY_BG_PLAY_LIVE
+  KEY_BG_PLAY_LIVE,
+  // 聊天页右侧资料列默认展开。三档化后第三栏只在聊天页出现，用户用顶栏那颗
+  // 「▯｜」键自己收起；这是它唯一的持久化偏好（全局，不随会话重置）。
+  KEY_INFO_COLUMN_OPEN
 ];
 
 // 平板/宽屏强制单栏（用户要求）：分栏那条路上的媒体查看器走全模态、标题栏不收，
@@ -545,6 +560,72 @@ export function applyNightMode(nightMode: string): void {
   }
 }
 
+// ---- 多栏布局迁移（P0） ---------------------------------------------------
+// 只认 Preferences 的真实持久化状态（hasSync 才算存在），交给纯函数状态机
+// planLayoutMigration 决策；写盘顺序固定为「先 layoutMode、成功后再标记」。
+// 任一步失败都记录日志并保留当前状态，下次启动重新判定（见 15 号报告 C 节）。
+async function applyLayoutMigration(s: preferences.Preferences,
+  plan: LayoutMigrationPlan): Promise<boolean> {
+  if (plan.writeMode) {
+    try {
+      await s.put(KEY_LAYOUT_MODE, plan.mode);
+      await s.flush();
+    } catch (e) {
+      logE(`AppSettings.layoutMigration(mode=${plan.mode}) failed: ${JSON.stringify(e)}`);
+      return false; // 新配置没写成功，绝不能先写迁移标记
+    }
+  }
+  if (plan.writeFlag) {
+    try {
+      await s.put(KEY_LAYOUT_MIGRATED_V1, true);
+      await s.flush();
+    } catch (e) {
+      // 配置已成功：下次启动走 backfill-flag，只补标记、不覆盖用户模式。
+      logE(`AppSettings.layoutMigration(mark) failed: ${JSON.stringify(e)}`);
+    }
+  }
+  return true;
+}
+
+async function readLayoutMigrationState(s: preferences.Preferences): Promise<LayoutMigrationState> {
+  const enabled: boolean = true; // 单一布局系统：启动即迁移，不再有运行时总开关
+  const hasLegacy: boolean = s.hasSync(KEY_FORCE_SINGLE_COLUMN);
+  const rawLegacy: preferences.ValueType = await s.get(KEY_FORCE_SINGLE_COLUMN, false);
+  const legacyDirty: boolean = typeof rawLegacy !== 'boolean';
+  const legacyTrue: boolean = rawLegacy === true;
+  const modePersisted: boolean = s.hasSync(KEY_LAYOUT_MODE);
+  const persistedMode: string = modePersisted ? await s.get(KEY_LAYOUT_MODE, '') as string : '';
+  // 'multi' 必须算有效值（2026-11-08 三档化）：漏掉它会让每次启动都走
+  // recover-corrupt，把用户刚选的多栏重置回 auto。'double' / 'triple' 作为历史
+  // 别名继续算有效——老版本存下的值不该被当成损坏配置清掉，boot 时由
+  // normalizeLayoutMode 统一改成 'multi'。
+  const modeValid: boolean = persistedMode === LAYOUT_SINGLE || persistedMode === LAYOUT_DOUBLE ||
+    persistedMode === LAYOUT_TRIPLE || persistedMode === LAYOUT_MULTI ||
+    persistedMode === LAYOUT_AUTO;
+  return {
+    enabled: enabled,
+    modePersisted: modePersisted,
+    modeValid: modeValid,
+    modeValue: modeValid ? persistedMode : '',
+    flagPersisted: s.hasSync(KEY_LAYOUT_MIGRATED_V1),
+    hasLegacy: hasLegacy,
+    legacyTrue: legacyTrue,
+    legacyDirty: legacyDirty
+  };
+}
+
+async function runLayoutMigration(s: preferences.Preferences): Promise<LayoutMigrationPlan> {
+  try {
+    const state: LayoutMigrationState = await readLayoutMigrationState(s);
+    const plan: LayoutMigrationPlan = planLayoutMigration(state);
+    await applyLayoutMigration(s, plan);
+    return plan;
+  } catch (e) {
+    logE(`AppSettings.layoutMigration(read) failed: ${JSON.stringify(e)}`);
+    return { mode: LAYOUT_AUTO, writeMode: false, writeFlag: false, reason: 'read-error' };
+  }
+}
+
 // Load everything into AppStorage. Call once at startup, before the first page
 // renders, so components never flash the default value.
 export async function initSettings(context: common.Context): Promise<void> {
@@ -554,6 +635,20 @@ export async function initSettings(context: common.Context): Promise<void> {
     const s = store as preferences.Preferences;
     AppStorage.setOrCreate(KEY_TEXT_SIZE, await s.get(KEY_TEXT_SIZE, TEXT_SIZE_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_SPLIT_NAV_WIDTH, await s.get(KEY_SPLIT_NAV_WIDTH, 0) as number);
+    // 多栏布局（P0）：先按真实 Preferences 状态决定是否迁移（含失败恢复），
+    // 再写 AppStorage。迁移写盘必须 await，否则无法区分「写成功」「写失败」。
+    const migrationPlan: LayoutMigrationPlan = await runLayoutMigration(s);
+    const bootLayout = bootLayoutValues(migrationPlan.mode,
+      await s.get(KEY_NAV_WIDTH_DOUBLE, NAV_WIDTH_DOUBLE_DEFAULT) as number,
+      await s.get(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT) as number,
+      await s.get(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT) as number,
+      await s.get(KEY_INFO_VISIBLE, false) as boolean,
+      true);
+    AppStorage.setOrCreate(KEY_LAYOUT_MODE, bootLayout.mode);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_DOUBLE, bootLayout.navWidthDouble);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, bootLayout.navWidthTriple);
+    AppStorage.setOrCreate(KEY_INFO_WIDTH, bootLayout.infoWidth);
+    AppStorage.setOrCreate(KEY_INFO_VISIBLE, bootLayout.infoVisible);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, await s.get(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT) as number);
     AppStorage.setOrCreate(KEY_THREE_LINES, await s.get(KEY_THREE_LINES, false) as boolean);
     AppStorage.setOrCreate(KEY_REDUCE_ANIM, await s.get(KEY_REDUCE_ANIM, false) as boolean);
@@ -669,6 +764,12 @@ export async function initSettings(context: common.Context): Promise<void> {
     AppStorage.setOrCreate(KEY_HOLD_SPEED_LIMIT, HOLD_SPEED_LIMIT_DEFAULT);
     AppStorage.setOrCreate(KEY_TEXT_SIZE, TEXT_SIZE_DEFAULT);
     AppStorage.setOrCreate(KEY_SPLIT_NAV_WIDTH, 0);
+    // 多栏布局缺省：持久层不可用时也必须让 UI 有确定值（panel 不闪 undefined）。
+    AppStorage.setOrCreate(KEY_LAYOUT_MODE, LAYOUT_MODE_DEFAULT);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_DOUBLE, NAV_WIDTH_DOUBLE_DEFAULT);
+    AppStorage.setOrCreate(KEY_NAV_WIDTH_TRIPLE, NAV_WIDTH_TRIPLE_DEFAULT);
+    AppStorage.setOrCreate(KEY_INFO_WIDTH, INFO_WIDTH_DEFAULT);
+    AppStorage.setOrCreate(KEY_INFO_VISIBLE, false);
     AppStorage.setOrCreate(KEY_BUBBLE_RADIUS, RADIUS_DEFAULT);
     AppStorage.setOrCreate(KEY_THREE_LINES, false);
     AppStorage.setOrCreate(KEY_NIGHT_MODE, NIGHT_SYSTEM);
@@ -768,6 +869,41 @@ export function setString(key: string, value: string): void {
   mirrorChatEnvKey(key, value);
   persist(key, value);
 }
+
+// --- 多栏布局（P0） --------------------------------------------------------
+// 用户改布局模式时必须双写旧键：P0–P4 期间 13 个旧页面仍读
+// KEY_FORCE_SINGLE_COLUMN，不双写它们会与设置页显示相反。只有 single 写 true，
+// 其它三档写 false。
+export function setLayoutMode(mode: string): void {
+  const safe = normalizeLayoutMode(mode);
+  setString(KEY_LAYOUT_MODE, safe);
+  setBoolean(KEY_FORCE_SINGLE_COLUMN, legacyValueFor(safe));
+  // 用户主动写过 layoutMode 就等于新配置已有效；补上迁移标记，避免下次启动
+  // 再走一次「旧配置迁移」判定。
+  persist(KEY_LAYOUT_MIGRATED_V1, true);
+}
+
+export function setNavWidthDouble(width: number): void {
+  setNumber(KEY_NAV_WIDTH_DOUBLE, sanitizeNavWidth(width, NAV_WIDTH_DOUBLE_DEFAULT));
+}
+
+export function setNavWidthTriple(width: number): void {
+  setNumber(KEY_NAV_WIDTH_TRIPLE, sanitizeNavWidth(width, NAV_WIDTH_TRIPLE_DEFAULT));
+}
+
+export function setInfoWidth(width: number): void {
+  setNumber(KEY_INFO_WIDTH, sanitizeInfoWidth(width));
+}
+
+// 兼容键：新布局启用后资料栏由 resolvedLayout 派生（见 effectiveInfoVisible），
+// 不再读这个开关。保留写入只用于旧布局回滚路径；P1 接线时不要再用它控制第三列。
+export function setInfoVisible(visible: boolean): void {
+  setBoolean(KEY_INFO_VISIBLE, visible);
+}
+
+// 单一布局系统（2026-11-08）：运行期不再有新旧布局总开关。旧键仅作历史
+// 数据保留，页面与启动装载都不再读取它；迁移由 KEY_LAYOUT_MIGRATED_V1 保证
+// 只执行一次。
 
 function boolValue(key: string, fallback: boolean): boolean {
   return AppStorage.get<boolean>(key) ?? fallback;

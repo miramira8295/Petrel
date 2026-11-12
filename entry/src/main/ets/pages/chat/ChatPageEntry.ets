@@ -21,6 +21,8 @@ import {
 import { KEY_SPLIT_UNIFIED_BG } from '../../util/localWallpaper';
 import { KEY_DEBUG_LIST_CACHED, LIST_CACHED_COUNT_DEFAULT } from '../../util/debugListPerf';
 import { CHAT_CONTENT_WIDTH_KEY } from '../../util/chatContentWidth';
+import { KEY_RESOLVED_LAYOUT } from '../../util/layoutState';
+import { KEY_INFO_COLUMN_OPEN } from '../../util/layoutModeSettings';
 
 // 路由表（router_map.json）的 buildFunction 指向这里。系统在跳转时动态加载
 // 本模块并调用它，页面因此不再需要进 main_pages.json。
@@ -73,6 +75,11 @@ struct ChatPageChrome {
   @StorageProp(KEY_SEND_BY_ENTER) sendByEnter: boolean = false;
   @StorageProp('screenWidthVp') screenW: number = 360;
   @StorageProp(KEY_FORCE_SINGLE_COLUMN) forceSingleColumn: boolean = false;
+  // 解析后的实际布局（single / double / triple）。资料列开关只能按它判断——不能
+  // 用偏好 'multi'，因为 multi 在窄窗会被解析成 double，那时根本没有第三栏。
+  @StorageProp(KEY_RESOLVED_LAYOUT) resolvedLayout: string = '';
+  // 聊天页右侧资料列的用户开合偏好：持久化、全局，不随会话重置。
+  @StorageProp(KEY_INFO_COLUMN_OPEN) infoColumnOpen: boolean = true;
   @StorageProp(CHAT_CONTENT_WIDTH_KEY) chatContentWidth: number = 360;
   @StorageProp('screenHeightVp') screenH: number = 780;
   // 系统断点（util/layoutBreakpoint）：分栏判据读它，不再按窗口宽高自己算。
@@ -115,6 +122,8 @@ struct ChatPageChrome {
       sendByEnter: this.sendByEnter,
       screenW: this.screenW,
       forceSingleColumn: this.forceSingleColumn,
+      resolvedLayout: this.resolvedLayout,
+      infoColumnOpen: this.infoColumnOpen,
       chatContentWidth: this.chatContentWidth,
       screenH: this.screenH,
       widthBp: this.widthBp,
