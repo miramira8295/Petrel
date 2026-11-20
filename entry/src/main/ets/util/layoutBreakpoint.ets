@@ -44,8 +44,30 @@ export const HEIGHT_BP_LG: number = 2;
 //
 // 不用 NavigationMode.Auto：它只看宽度，正好会撞上 #125；而且还有「强制单栏」开关、
 // 查看器盖满窗口等运行时回退——官方把这类情况列为手动断点切换的适用场景。
+// P1：统一布局状态接管后，分栏结论以 MainScreen 发布的 resolvedLayout 为准：
+// single → 不分栏；double/triple → 分栏。旧判据只在派生值尚未发布时兜底
+// （启动第一帧、单测宿主环境），这样 13 个旧读取点不需要各自再抄一份判断，
+// 也不会与 resolvedLayout 得出相反结论。
+export const KEY_RESOLVED_LAYOUT: string = 'resolvedLayout';
+
+function readResolvedLayoutSafe(): string {
+  try {
+    return AppStorage.get<string>(KEY_RESOLVED_LAYOUT) ?? '';
+  } catch (e) {
+    return '';
+  }
+}
+
 export function isSplitByBreakpoint(widthBp: number, heightBp: number,
   forceSingleColumn: boolean, windowPortrait: boolean): boolean {
+  const resolved: string = readResolvedLayoutSafe();
+  if (resolved === 'single') {
+    return false;
+  }
+  if (resolved === 'double' || resolved === 'triple') {
+    return true;
+  }
+  // —— 以下为旧判据兜底，仅在 resolvedLayout 尚未发布时生效 ——
   if (forceSingleColumn || windowPortrait) {
     return false;
   }

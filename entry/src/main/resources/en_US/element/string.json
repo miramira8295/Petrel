@@ -8400,6 +8400,7 @@
       "name": "cp_mute",
       "value": "Mute"
     },
+
     {
       "name": "cp_auto_delete",
       "value": "Auto-delete messages"
@@ -12137,6 +12138,26 @@
       "value": "Force single column"
     },
     {
+      "name": "settings_layout_mode",
+      "value": "Layout mode"
+    },
+    {
+      "name": "settings_layout_auto",
+      "value": "Auto"
+    },
+    {
+      "name": "settings_layout_single",
+      "value": "Single"
+    },
+    {
+      "name": "settings_layout_multi",
+      "value": "Multi-column"
+    },
+    {
+      "name": "settings_layout_auto_sub",
+      "value": "Auto follows device: phone single, tablet double, desktop triple. Temporarily downgraded when space is short; your choice is kept."
+    },
+    {
       "name": "chat_settings_force_single_sub",
       "value": "Use the phone layout on tablets and wide screens"
     },
@@ -13578,3 +13599,4 @@
     }
   ]
 }
+

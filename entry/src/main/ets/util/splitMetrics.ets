@@ -44,9 +44,10 @@ const SPLIT_NAV_CAP_RATIO: number = 0.4;
 // ——比例再乘下去左栏只是在拉白边，会话行本身早就够宽了。
 // 注意这两个数只约束「想要的值」，最终仍要过 40% 上限和拖拽行程两道夹。
 const SPLIT_NAV_MIN_VP: number = 320;
-const SPLIT_NAV_MAX_VP: number = 480;
+// 上限与 paneNavWidth.NAV_MAX_VP 对齐（434），避免两套模型打架。
+const SPLIT_NAV_MAX_VP: number = 434;
 // 拖分割线能把左栏拉到的最宽处。
-const SPLIT_NAV_DRAG_MAX_VP: number = 560;
+const SPLIT_NAV_DRAG_MAX_VP: number = 434;
 // 右栏想要的最小宽度。窄窗口下让位（见 splitContentMinWidth）。
 const SPLIT_CONTENT_MIN_VP: number = 400;
 // 窄窗口下右栏最小宽度退成窗口的这个比例。取 0.6 不是随手定的：它正好是

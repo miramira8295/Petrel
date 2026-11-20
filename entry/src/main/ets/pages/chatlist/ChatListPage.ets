@@ -11,6 +11,7 @@ import {
   BreakpointType, HEIGHT_BP_LG, KEY_HEIGHT_BREAKPOINT, KEY_WINDOW_PORTRAIT, KEY_WIDTH_BREAKPOINT, WIDTH_BP_SM,
   isSplitByBreakpoint
 } from '../../util/layoutBreakpoint';
+import { KEY_RESOLVED_LAYOUT, resolvedLayoutActive, resolvedSplitActive } from '../../util/layoutState';
 import { UnreadBadgeCounts } from '../../util/unreadBadgeRule';
 import { chatListSyncState } from '../../util/syncState';
 import { flushPendingNavs } from '../../util/pendingNavFlush';
@@ -41,7 +42,12 @@ import { str } from '../../util/strings';
 import { LANGUAGE_EPOCH } from '../../util/appLanguage';
 import { overlayMaterial } from '../../util/overlayMaterial';
 import { TopGlassAction } from './TopGlassAction';
-import { navigateToChat } from '../../util/chatNav';
+import { KEY_MAIN_TAB, navigateToChat } from '../../util/chatNav';
+import { ArchivePage } from './ArchivePage';
+import { MyProfilePage } from '../main/MyProfilePage';
+import {
+  closeLeftPane, KEY_LEFT_PANE_MODE, LEFT_PANE_ARCHIVE, LEFT_PANE_CHATS, LEFT_PANE_PROFILE
+} from '../../util/leftPaneState';
 import { logE } from '../../util/log';
 import { nextTabPreloadIndex, pruneBuiltKeys } from '../../util/tabPreload';
 import { FolderBadge, badgeLabel, folderBadge, setFolderBadge } from '../../util/folderBadges';
@@ -281,6 +287,12 @@ export struct ChatListPage {
   private unsubUnread: (() => void) | null = null;
   private unsubChats: (() => void) | null = null;
   private unsubConn: (() => void) | null = null;
+  // 布局三档（自动 / 单栏 / 多栏）的解析结果。v2 布局状态没接管时是空串，
+  // 所有判据回退到旧断点逻辑（见 util/layoutState.resolvedLayoutActive）。
+  @StorageProp(KEY_RESOLVED_LAYOUT) private resolvedLayout: string = '';
+  // 左栏钻取态：'chats' 是常态；'archive' / 'profile' 时这一栏换成归档或
+  // 自己的资料，中栏聊天不动。手机（单栏）永远停在 'chats'。
+  @StorageProp(KEY_LEFT_PANE_MODE) @Watch('onLeftPaneChanged') private leftPane: string = LEFT_PANE_CHATS;
   @State searchOpening: boolean = false;
   private savedMessagesOpening: boolean = false;
   // 每个文件夹页签一个滚动控制器。HdsNavigation 靠它们驱动标题栏的收缩与
@@ -1104,6 +1116,15 @@ export struct ChatListPage {
   // maxWidth 只是 enableDragBar 拖分割线时的上限。
   // 算法搬到 util/splitMetrics.ets，理由见那里的文件头。这三个方法只剩把
   // 当前窗口宽度喂进去。
+  // 分栏判据：v2 布局状态接管时听它的三档解析结果，否则回退旧断点判断。
+  private splitActive(): boolean {
+    const r: string = this.resolvedLayout;
+    if (resolvedLayoutActive(r)) {
+      return resolvedSplitActive(r);
+    }
+    return isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait);
+  }
+
   private navBarMinWidth(): number {
     return splitNavMinWidth(this.screenW);
   }
@@ -1436,10 +1457,63 @@ export struct ChatListPage {
     .clip(true);
   }
 
+  // 左栏钻取态是否生效。必须同时要求分栏：窗口一降级成单栏（手机、平板竖屏、
+  // 强制单栏），左栏钻取就没有承载它的地方，立刻退回整页归档/资料页的老路。
+  private paneActive(): boolean {
+    return this.splitActive() && this.leftPane !== LEFT_PANE_CHATS;
+  }
+
+  private paneIsProfile(): boolean {
+    return this.paneActive() && this.leftPane === LEFT_PANE_PROFILE;
+  }
+
+  private paneIsArchive(): boolean {
+    return this.paneActive() && this.leftPane === LEFT_PANE_ARCHIVE;
+  }
+
+  // 左栏换了形态：论坛抽屉占的是同一块地方，两者不能叠着显示。
+  private onLeftPaneChanged(): void {
+    if (this.leftPane !== LEFT_PANE_CHATS) {
+      closeForumDrawer();
+    }
+  }
+
+  // 左栏资料页里的「设置」行：退出钻取态，切到设置页签。设置页在多栏下仍是
+  // 整窗页（它没有左/中栏结构），所以这里不留在左栏。2 = 设置页签。
+  private openSettingsFromPane(): void {
+    closeLeftPane();
+    AppStorage.setOrCreate<number>(KEY_MAIN_TAB, 2);
+  }
+
+  // 左栏钻取态的壳，铺满 navBar 内容区（原来是会话列表占的那一栏）。
+  // 归档与个人资料共用这个壳，具体渲染谁由 leftPane 决定。
+  @Builder
+  paneContent() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.paneIsArchive()) {
+        // 归档自带「‹ 会话」返回条，返回 = 左栏回列表（中栏聊天不动）。
+        ArchivePage({ paneMode: true });
+      } else {
+        // 个人资料：整份组件搬进左栏，编辑信息等子页在这条栏内继续钻取。
+        MyProfilePage({
+          active: true,
+          paneMode: true,
+          onOpenSettings: (): void => { this.openSettingsFromPane(); }
+        });
+      }
+    }
+    .width('100%').height('100%')
+    .clip(true);
+  }
+
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
       HdsNavigation(this.chatStack) {
         Column() {
+          if (this.paneActive()) {
+            // 钻取态代替整个左栏内容（标题、页签、列表全让位），中栏聊天不受影响。
+            this.paneContent();
+          } else {
           this.titleBarActions();
           HomeConversationPanel({
             header: (): void => { this.titleBarBottom(); },
@@ -1447,6 +1521,7 @@ export struct ChatListPage {
           })
           .width(`calc(100% - ${homeCardMarginVp(this.widthBp) * 2}vp)`)
           .layoutWeight(1);
+          }
         }
         .width('100%').height('100%')
         .padding({
@@ -1458,8 +1533,7 @@ export struct ChatListPage {
           const paneWidth: number = Number(area.width);
           if (paneWidth > 0 && AppStorage.get<number>(NAV_BAR_WIDTH_KEY) !== paneWidth) {
             AppStorage.setOrCreate<number>(NAV_BAR_WIDTH_KEY, paneWidth);
-            rememberSplitNavWidth(paneWidth,
-              isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait));
+            rememberSplitNavWidth(paneWidth, this.splitActive());
           }
         });
       }
@@ -1468,7 +1542,7 @@ export struct ChatListPage {
       // 一级页签，没有返回键。
       .hideBackButton(true)
       // Explicit breakpoints keep landscape phones in one column.
-      .mode(isSplitByBreakpoint(this.widthBp, this.heightBp, this.forceSingleColumn, this.windowPortrait) ? NavigationMode.Split : NavigationMode.Stack)
+      .mode(this.splitActive() ? NavigationMode.Split : NavigationMode.Stack)
       // 分栏下查看器开着：Split + hideNavBar(true) 的实际效果是单栏，右栏会话页铺满窗口（#201）。
       .hideNavBar(this.viewerHidesNavBar())
       .navBarWidthRange({ minWidth: this.navBarMinWidth(), maxWidth: this.navBarMaxWidth() })

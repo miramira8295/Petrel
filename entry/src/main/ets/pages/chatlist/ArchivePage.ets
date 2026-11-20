@@ -8,6 +8,7 @@ import { plural, str } from '../../util/strings';
 import { LANGUAGE_EPOCH } from '../../util/appLanguage';
 import { allocChatDestToken, markChatDestHidden, markChatDestShown } from '../../util/chatDestTracker';
 import { BLUR_MAX_VP, EDGE_OVERLAY_VP, edgeBlurRadiusOf } from '../../util/scrollEdgeBlur';
+import { closeLeftPane } from '../../util/leftPaneState';
 import { ScrollEdgeBlurBinder } from '../../util/scrollEdgeBlurModifier';
 import {
   EDGE_BLUR_BOTTOM_ON_DEFAULT, EDGE_BLUR_FOLLOW, EDGE_BLUR_ON_DEFAULT, EDGE_BLUR_TOP_ON_DEFAULT,
@@ -38,6 +39,11 @@ export struct ArchivePage {
   // router 页了，弹不到自己。
   private navStack: NavPathStack | undefined = undefined;
   private readonly chatDestToken: number = allocChatDestToken();
+
+  // 多栏（平板/电脑）下的左栏钻取态：本页不再是一层 NavDestination，而是直接铺在
+  // 会话列表栏里（04:205 / D-108）。两种壳共用同一份 pageBody，内容一个字不改，
+  // 差别只有三处：不要 HDS 标题栏、返回等于关左栏钻取、列表要给悬浮胶囊留位置。
+  @Prop paneMode: boolean = false;
 
   @StorageProp(LANGUAGE_EPOCH) langEpoch: number = 0;
   @StorageProp('topSafeHeight') topSafe: number = 0;
@@ -107,6 +113,11 @@ export struct ArchivePage {
   // 只剩 Index 一层，this.getUIContext().getRouter().back() 弹掉的是 Index——平板模拟器实测（Task 7 修复轮 1）
   // 的现象是「点返回箭头直接退到桌面」。要出的是 Navigation 栈。
   private goBack(): void {
+    if (this.paneMode) {
+      // 左栏钻取态没有栈层可出：返回 = 左栏回到会话列表，中栏聊天不动。
+      closeLeftPane();
+      return;
+    }
     const stack = this.navStack;
     if (stack === undefined) {
       // navStack 由 onReady(ctx.pathStack) 填，而 onReady 必先于本页可见，所以
@@ -128,25 +139,45 @@ export struct ArchivePage {
     return plural('ap_chats_n', this.archivedCount, this.archivedCount);
   }
 
-  // 标题条高度：状态栏让位 + 56 的行高。列表的首行位置也用这个值，两者必须同源。
-  private headerHeight(): number {
-    return this.topSafe + 62;
+  // 标题条的上内缩：整页壳要让状态栏（页体自己 expandSafeArea 到系统区），
+  // 左栏壳挂在 HdsNavigation 的 navBar 里，状态栏已经由外层让过一次，再加一遍
+  // 就是凭空多出一条空白。
+  private headerTopInset(): number {
+    // 左栏壳也贴在窗口 y=0 上画（整棵树是全屏布局，安全区由各控件自己让），
+    // 所以这里同样是 topSafe。早先按 0 处理过一版，真机上标题条直接压进状态栏
+    // 和时钟叠在一起（2026-11-08 实测截图）。
+    return this.topSafe;
   }
 
-  build() {
-    HdsNavDestination() {
+  // 标题条整条高度（含状态栏那一段）。列表要让出这么多才开始放第一条。
+  private headerHeight(): number {
+    return this.headerTopInset() + 62;
+  }
+
+  // 页体：自绘标题条（‹ 返回 + 「归档」+ 条数摘要）+ 归档列表。
+  // 整页壳与左栏壳共用同一份，内容不因为壳不同而分叉。
+  //
+  // 标题条浮在列表上方而不是压在列表上头：列表从窗口最上沿开始铺，内容滚到标题
+  // 底下时靠 linearGradientBlur 逐渐糊掉，标题本身始终清晰（联系人页 / 个人资料页
+  // / 设置页都是这套，2026-11-08 用户要求归档页也改成一致）。
+  @Builder
+  pageBody() {
     Stack({ alignContent: Alignment.TopStart }) {
-      // 列表铺满整页并往上顶：内容从标题条底下穿过去，标题条本身是透明的，
-      // 靠 linearGradientBlur 只虚化顶部一条，落到标题上的内容自然淡出。
-      // 注意 linearGradientBlur 是容器级属性，必须挂在包裹 List 的容器上。
+      // 外面再套一层容器：linearGradientBlur 是**容器级**属性，挂在包裹列表的这层
+      // 上才作用到整棵列表（含溢出到标题条底下的那一截）；挂在自定义组件上不生效
+      //（ChatListView 内部同样的注释：挂在 List 上时几版截图一模一样）。
       Column() {
         ChatListView({
           listKey: 'archive',
-          reserveDockSpace: false,
+          // 左栏壳下悬浮胶囊就压在这条栏的底部，列表要让位；整页壳下胶囊是藏着的。
+          reserveDockSpace: this.paneMode,
           obeyGlobalGate: false,
           pageVisible: this.pageVisible,
+          // 列表自己已经上顶 EDGE_OVERLAY_VP、内容起点按 EDGE_OVERLAY_VP + 本值
+          // 计算，所以这里直接给标题条整条高度，首行就落在标题条下沿。
           contentTopInset: this.headerHeight()
-        });
+        })
+          .width('100%').height('100%');
       }
       .width('100%').height('100%')
       // 顶部/底部边缘渐变虚化：内容穿透到标题条底下，边缘自己变糊。
@@ -179,32 +210,46 @@ export struct ArchivePage {
         .layoutWeight(1).alignItems(HorizontalAlign.Start).margin({ left: 4 });
       }
       .width('100%').height(this.headerHeight())
-      .padding({ left: 6, right: 16, top: this.topSafe })
+      .padding({ left: 6, right: 16, top: this.headerTopInset() })
+      // 底色全透明：标题条底下透出来的是被虚化过的列表内容 / 壁纸。
       .backgroundColor(Color.Transparent)
-      // 标题条只负责画，不负责挡手指：触摸要穿到下面的列表去。
+      // 这一条只是标题，别把滚动接管走；返回按钮自己吃点击。
       .hitTestBehavior(HitTestMode.Transparent);
     }
     .width('100%').height('100%')
     .backgroundColor($r('app.color.page_bg'))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
+    // 整页壳要把底色和标题条伸进系统区（状态栏底下那条），左栏壳不能伸。
+    .expandSafeArea(this.paneMode ? [] : [SafeAreaType.SYSTEM],
+      this.paneMode ? [] : [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
+  }
+
+  build() {
+    if (this.paneMode) {
+      // 左栏钻取态：铺满会话列表栏。这里**不再套 HdsNavDestination**——本页此时
+      // 就长在一个 HdsNavigation 的 navBar 里，再套一层会和外壳抢返回键和标题栏。
+      this.pageBody();
+    } else {
+      HdsNavDestination() {
+        this.pageBody();
+      }
+      // 本页自绘标题栏（返回键 + 「归档」标题那一条），不要 HDS 的。
+      .hideTitleBar(true)
+      .onBackPressed((): boolean => collapseFloatingVideo())
+      .onReady((ctx: NavDestinationContext): void => {
+        this.navStack = ctx.pathStack;
+      })
+      // 盖住时停发、露出时补发。归档列表的未读角标就靠这一对回来
+      //（2026-09-18：点进会话看完退回来，角标一直挂着）。
+      .onWillShow((): void => { markChatDestShown(this.chatDestToken); })
+      .onShown((): void => {
+        markChatDestShown(this.chatDestToken);
+        this.pageVisible = true;
+      })
+      .onHidden((): void => {
+        markChatDestHidden(this.chatDestToken);
+        this.pageVisible = false;
+      })
+      .width('100%').height('100%');
     }
-    // 本页自绘标题栏（返回键 + 「归档」标题那一条），不要 HDS 的。
-    .hideTitleBar(true)
-    .onBackPressed((): boolean => collapseFloatingVideo())
-    .onReady((ctx: NavDestinationContext): void => {
-      this.navStack = ctx.pathStack;
-    })
-    // 盖住时停发、露出时补发。归档列表的未读角标就靠这一对回来
-    //（2026-09-18：点进会话看完退回来，角标一直挂着）。
-    .onWillShow((): void => { markChatDestShown(this.chatDestToken); })
-    .onShown((): void => {
-      markChatDestShown(this.chatDestToken);
-      this.pageVisible = true;
-    })
-    .onHidden((): void => {
-      markChatDestHidden(this.chatDestToken);
-      this.pageVisible = false;
-    })
-    .width('100%').height('100%');
   }
 }

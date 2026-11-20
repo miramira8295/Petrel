@@ -182,7 +182,8 @@ import {
   KEY_CURRENT_NETWORK_TYPE,
   KEY_POWER_SMOOTH_TRANSITIONS,
   powerAnimationDuration,
-  powerSavingActive
+  powerSavingActive,
+  setBoolean
 } from '../../store/AppSettings';
 import {
   COLOR_PRIMARY, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, darkResourceMode
@@ -778,6 +779,8 @@ export struct ChatPage {
   @Require @Param screenW: number = 360;
   // 设置里的「强制单栏」。V2 读不了 AppStorage，由 ChatPageEntry 透传。
   @Require @Param forceSingleColumn: boolean = false;
+  // 解析后的实际布局（single / double），同样由 ChatPageEntry 透传。
+  @Require @Param resolvedLayout: string = '';
   @Require @Param chatContentWidth: number = 360;
   private lastScreenW: number = 0;
   @Require @Param screenH: number = 780;
