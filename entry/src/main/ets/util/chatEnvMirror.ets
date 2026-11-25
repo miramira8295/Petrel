@@ -78,6 +78,8 @@ const MIRRORED_KEYS: string[] = [
   'debugDrawnRich',
 
   'appearanceEpoch', 'materialEpoch', 'languageEpoch', 'bubbleGlassOn',
+  // 滑动态：玻璃载体（NativeGlassHost）靠它决定滑动中是否卸载系统材质滤镜。
+  'chatScrollActive',
   'chatContentWidthVp', 'keyboardHeightVp', 'screenWidthVp', 'screenHeightVp',
   'msgTextSize', 'bubbleRadius', 'reduceAnimations', 'powerSavingActive',
   'powerChatEffects', 'powerEffectMessage', 'powerEffectReaction',
@@ -155,6 +157,11 @@ export function mirrorChatEnvKey(key: string, value: number | boolean | string):
     // 气泡走自己的开关（KEY_BUBBLE_GLASS_ON）：整体那一面开不开与气泡无关。
     case 'bubbleGlassOn':
       if (chatEnv.bubbleMaterialOn !== (value as boolean)) { chatEnv.bubbleMaterialOn = value as boolean; }
+      break;
+    // 此前这一支是缺的：setScrollActive 每次双写都会被 default 静默吞掉，
+    // 于是 chatEnv.scrollActive 恒为 false，玻璃窗里的滑动态分支永远进不去。
+    case 'chatScrollActive':
+      if (chatEnv.scrollActive !== (value as boolean)) { chatEnv.scrollActive = value as boolean; }
       break;
     case 'chatContentWidthVp':
       if (chatEnv.chatContentWidth !== (value as number)) { chatEnv.chatContentWidth = value as number; }

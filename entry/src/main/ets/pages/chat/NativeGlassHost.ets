@@ -15,6 +15,7 @@
 import { immersiveMaterialAvailable, materialOff, OverlaySurface } from '../../util/overlayMaterial';
 import { materialModifierWhen } from '../../util/materialModifier';
 import { MaterialEpochSource, materialEpochSource } from '../../util/materialEpoch';
+import { chatEnv } from '../../util/chatEnvMirror';
 
 @ComponentV2
 export struct NativeGlassHost {
@@ -55,6 +56,24 @@ export struct NativeGlassHost {
     return this.dark ? '#B32F3F52' : '#B3F8F8F8';
   }
 
+  // 滑动态：聊天页里的玻璃载体（顶栏胶囊、输入栏、回底浮钮、置顶条…）在真机上
+  // 一共约 10 个，滑动时每一帧内容都在它们背后变，滤镜缓存全部失效。
+  // 2026-11-26 真机 hitrace（平板 59LYD25729201299，16 次 dircFling）：
+  //   ApplyHpsImageEffect 11543 次 / 1272 帧 = 9.08 次/帧，全部离屏重做；
+  //   同一会话静止时只有 0.93 次/帧 —— 也就是说这些模糊是**滑动时**才变贵的。
+  // 滑动中玻璃本来就看不清楚，所以这段时间直接退化成纯色板（不挂材质、不挂
+  // backgroundEffect，节点上不留任何滤镜），停下滑动后立刻恢复。
+  private scrollingNow(): boolean {
+    // 在 build 链路里读 @Trace，登记依赖；不读的话开始/结束滑动都不会重绘。
+    return chatEnv.scrollActive;
+  }
+
+  private scrollPlateFill(): ResourceColor {
+    // 比材质亮一档、比 fill() 更不透明：滑动中不需要透出背后的内容，
+    // 太透会让人看到「糊掉/没糊掉」的跳变。
+    return this.dark ? '#E62F3F52' : '#E6F7F7F7';
+  }
+
   build() {
     Stack() {
       if (!this.effectsEnabled) {
@@ -62,6 +81,14 @@ export struct NativeGlassHost {
           .width(this.hostWidth).height(this.hostHeight).borderRadius(this.hostRadius)
           .backgroundColor($r('app.color.chat_overlay'))
           .focusable(false)
+          .hitTestBehavior(this.tapHost ? HitTestMode.Default : HitTestMode.None)
+          .onClick((): void => { if (this.tapHost) { this.onHostTap(); } })
+          .accessibilityLevel('no-hide-descendants');
+      } else if (this.scrollingNow()) {
+        // 滑动态：只画一块纯色板，节点上不挂任何滤镜（材质/backgroundEffect 都不挂）。
+        Row()
+          .width(this.hostWidth).height(this.hostHeight).borderRadius(this.hostRadius)
+          .backgroundColor(this.scrollPlateFill())
           .hitTestBehavior(this.tapHost ? HitTestMode.Default : HitTestMode.None)
           .onClick((): void => { if (this.tapHost) { this.onHostTap(); } })
           .accessibilityLevel('no-hide-descendants');
