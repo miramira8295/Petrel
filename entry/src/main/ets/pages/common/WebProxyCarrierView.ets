@@ -1,5 +1,5 @@
 import { webview } from '@kit.ArkWeb';
-import { logI, logW } from '../../util/log';
+import { logW } from '../../util/log';
 import {
   KEY_WEB_PROXY_CARRIERS, webProxyCarrierManager, WebProxyCarrierSpec
 } from '../../services/WebProxyHost';
@@ -45,12 +45,26 @@ function buildCarrierShimScript(origin: string, bridgeObjectName: string): strin
     + "  }\n"
     + "  var listener = null;\n"
     + "  var pending = [];\n"
+    + "  var pendingBytes = 0;\n"
+    + "  var PENDING_MAX_BYTES = 4 * 1024 * 1024;\n"
+    + "  function pendingSize(ev){\n"
+    + "    var d = ev && ev.data;\n"
+    + "    if (typeof d === 'string') { return d.length * 2; }\n"
+    + "    if (d && typeof d.byteLength === 'number') { return d.byteLength; }\n"
+    + "    return 0;\n"
+    + "  }\n"
     + "  function dispatch(ev){\n"
     + "    if (typeof listener === 'function') {\n"
     + "      try { listener(ev); } catch (e) {}\n"
-    + "    } else if (pending.length < 128) {\n"
-    + "      pending.push(ev);\n"
+    + "      return;\n"
     + "    }\n"
+    + "    var size = pendingSize(ev);\n"
+    + "    if (pending.length >= 128 || pendingBytes + size > PENDING_MAX_BYTES) {\n"
+    + "      try { send('text', JSON.stringify({t:'petrel-shim-pending-overflow', v:1})); } catch (e) {}\n"
+    + "      return;\n"
+    + "    }\n"
+    + "    pending.push(ev);\n"
+    + "    pendingBytes += size;\n"
     + "  }\n"
     + "  var bridge = {\n"
     + "    postMessage: function(value){\n"
@@ -69,7 +83,7 @@ function buildCarrierShimScript(origin: string, bridgeObjectName: string): strin
     + "      listener = fn;\n"
     + "      if (typeof listener === 'function' && pending.length > 0) {\n"
     + "        var list = pending;\n"
-    + "        pending = [];\n"
+    + "        pending = [];\n        pendingBytes = 0;\n"
     + "        for (var i = 0; i < list.length; i++) {\n"
     + "          try { listener(list[i]); } catch (e) {}\n"
     + "        }\n"
@@ -88,6 +102,19 @@ function buildCarrierShimScript(origin: string, bridgeObjectName: string): strin
     + "    var data = kind === 'binary' ? fromB64(payload) : payload;\n"
     + "    dispatch({ data: data });\n"
     + "  };\n"
+    + "  function announceReady(tries){\n"
+    + "    var a = api();\n"
+    + "    if (!a || typeof a.post !== 'function') {\n"
+    + "      if (tries < 100) { setTimeout(function(){ announceReady(tries + 1); }, 50); }\n"
+    + "      return;\n"
+    + "    }\n"
+    + "    try {\n"
+    + "      a.post('text', JSON.stringify({t:'petrel-shim-ready', v:1}));\n"
+    + "    } catch (e) {\n"
+    + "      if (tries < 100) { setTimeout(function(){ announceReady(tries + 1); }, 50); }\n"
+    + "    }\n"
+    + "  }\n"
+    + "  setTimeout(function(){ announceReady(0); }, 0);\n"
     + "})();";
 }
 
@@ -154,7 +181,9 @@ struct TdWebProxyCarrierItemView {
         permission: carrierBridgePermission(this.spec.origin)
       })
       .javaScriptOnDocumentStart([
-        { script: this.shimScript, scriptRules: [this.spec.origin] }
+        // carrier URL 带路径/查询参数，只写 origin 在精确匹配下不会注入；
+        // 用通配让脚本在每个文档起始执行，脚本自身会校验 top 与 location.origin。
+        { script: this.shimScript, scriptRules: ['*'] }
       ])
       .onControllerAttached((): void => {
         webProxyCarrierManager.attachController(this.spec.id, this.controller);
@@ -198,8 +227,11 @@ struct TdWebProxyCarrierItemView {
       .onRenderExited((): void => {
         webProxyCarrierManager.onPageError(this.spec.id, 'terminated');
       })
+      .onPageBegin((): void => {
+        webProxyCarrierManager.onPageBegin(this.spec.id);
+      })
       .onPageEnd((): void => {
-        logI(`[WebProxy] carrier ${this.spec.id} page loaded`);
+        webProxyCarrierManager.onPageEnd(this.spec.id);
       })
       .width(1).height(1)
       .opacity(0.01)

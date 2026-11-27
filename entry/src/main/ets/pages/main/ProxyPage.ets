@@ -52,6 +52,7 @@ import {
   normalizeWebProxyHost, normalizeWebProxyPath, normalizeWebProxySecret,
   parseWebProxyLink, WebProxyLinkInfo, webProxyConfigProblem
 } from '../../util/webProxyConfig';
+import { prewarmWebProxyEngine } from '../../services/WebProxyHost';
 
 // 回落的 TCP 握手计时上限。5s 内连不上代理服务器，就按不通处理。
 const REACH_TIMEOUT_MS: number = 5000;
@@ -253,6 +254,7 @@ export struct ProxyPage {
     this.resetForm();
     this.importedForm = true;
     this.fType = PROXY_WEB;
+    prewarmWebProxyEngine();
     this.fServer = draft.host;
     this.fPath = draft.path;
     this.fSecret = draft.secret;
@@ -365,6 +367,7 @@ export struct ProxyPage {
       this.resetForm();
       this.importedForm = true;
       this.fType = PROXY_WEB;
+      prewarmWebProxyEngine();
       this.fServer = server;
       this.fPath = (params['proxyPath'] as string | undefined) ?? '';
       this.fSecret = (params['proxySecret'] as string | undefined) ?? '';
@@ -918,6 +921,7 @@ export struct ProxyPage {
     this.resetForm();
     this.editingId = entry.id;
     this.fType = entry.type;
+    if (entry.type === PROXY_WEB) { prewarmWebProxyEngine(); }
     this.fServer = entry.server;
     this.fPort = `${entry.port}`;
     this.fUser = entry.username;
@@ -1017,6 +1021,7 @@ export struct ProxyPage {
       return;
     }
     const draft = this.formEntry();
+    if (draft.type === PROXY_WEB) { prewarmWebProxyEngine(); }
     const duplicate = this.proxies.find((entry: ProxyEntry): boolean =>
       entry.id !== this.editingId && sameProxyConfiguration(entry, draft)
     );

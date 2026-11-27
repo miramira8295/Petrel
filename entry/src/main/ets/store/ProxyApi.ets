@@ -157,7 +157,10 @@ export async function testProxy(entry: ProxyEntry): Promise<number> {
   // MTProto 还带 secret，一旦 JSON.stringify 进 hilog，任何能连上设备的人
   // 都读得到。当初排查形状问题时加过这行，问题已经定位，日志必须撤掉。
   const startedAt = Date.now();
-  await getTdClient().send(request, 12000);
+  // TDLib 自己的 timeout=10s 从临时 carrier 就绪后才开始算；页面加载通常还要
+  // 1.5–2s，客户端只留 12s 会在慢网下先于 TDLib 报错。这里只放宽外层等待，
+  // 不缩短 TDLib 的 10s 测试窗口。
+  await getTdClient().send(request, 20000);
   return (Date.now() - startedAt) / 1000;
 }
 
