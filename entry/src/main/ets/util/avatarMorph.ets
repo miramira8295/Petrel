@@ -13,15 +13,19 @@ import { HEIGHT_BP_SM, WIDTH_BP_MD } from './layoutBreakpoint';
 
 export const AVATAR_BASE: number = 100;         // 「我的资料」收起态照片边长
 export const AVATAR_PROFILE_BASE: number = 116; // 联系人/群组资料页收起态照片边长
-export const AVATAR_RATIO_SPAN: number = 115;   // 圆角/圆环/上移走完的行程
+export const AVATAR_RATIO_SPAN: number = 135;   // 圆角/圆环/上移走完的行程（2026-11-28 用户要求行程再长一点：115 → 135）
 export const AVATAR_W_GAIN: number = 3.39;      // 下拉每 vp 宽涨多少（先顶满目标宽）
 export const AVATAR_H_GAIN: number = 2.6;       // 下拉每 vp 高涨多少（后到 390）
 export const AVATAR_TOP_LIFT: number = 12;      // 收起态整体上移多少 vp（用户：提一点点）
 export const AVATAR_EXPANDED_H: number = 390;   // 展开态高度
 export const AVATAR_CARD_RADIUS: number = 16;   // 平板卡片态圆角（跟内容卡片一致）
 export const AVATAR_RING: number = 4;           // 「我的资料」卡底圆环宽度（随 ratio 收到 0）
+// 圆环必须在照片涨到屏幕宽**之前**收完：否则外盒会比屏幕宽 2*ring，照片中心对齐后
+// 左缘多出的那 1~2px 白底正好压在屏幕边上，逐帧小数变化时就是用户看到的
+// 「左边一条白线、一闪一闪」（2026-11-28 真机取证：pull=100 时 x=0 是白的，x=1 起是照片）。
+export const AVATAR_RING_END_RATIO: number = 0.62; // ratio 到这里圆环已经收成 0（早于照片顶满宽，见上）
 export const AVATAR_PROFILE_RING: number = 7;   // 联系人/群组资料页卡底圆环宽度（外径 130）
-export const AVATAR_EXPAND_AT: number = 115;    // 下拉超过它自动展开（= 形变走完的位置）
+export const AVATAR_EXPAND_AT: number = 135;    // 下拉超过它自动展开（= 形变走完的位置，必须与 AVATAR_RATIO_SPAN 相等）
 export const AVATAR_COLLAPSE_AT: number = 14;   // 展开后回滚超过它自动收起
 export const AVATAR_SNAP_MS: number = 420;      // 展开/收起动画时长
 export const AVATAR_TEXT_INSET: number = 20;    // 展开态文字的左缩进
@@ -81,7 +85,8 @@ export function avatarRingOf(pull: number, expanded: boolean,
   if (expanded) {
     return 0;
   }
-  return baseRing * (1 - avatarRatioOf(pull, expanded));
+  const ratio: number = avatarRatioOf(pull, expanded);
+  return baseRing * Math.max(0, 1 - ratio / AVATAR_RING_END_RATIO);
 }
 
 // 形变中的上移量：ratio 走完之前按比例抬，之后靠 -pull 抵消越界平移，照片钉在目标顶边。

@@ -1452,7 +1452,13 @@ export struct MyProfilePage {
 
   // 宽度：先顶满目标宽（两边先到边，不改成与高度同步长的正方形）。
   private avatarPhotoW(): number {
-    return avatarWidthOf(this.effectiveAvatarPull(), this.isAvatarExpanded(), this.avatarTargetWidth(), AVATAR_BASE);
+    // 外盒宽 = 照片宽 + 2*ring；只要它超过内容列宽，居中后就会在屏幕左缘露出
+    // 一条 1~2px 的白底（真机 pull=100 取证），所以这里先扣掉圆环，保证外盒
+    // 永远不超过内容列宽。形变后段圆环已是 0，这一钳制不影响终态宽度。
+    const raw: number = avatarWidthOf(this.effectiveAvatarPull(), this.isAvatarExpanded(),
+      this.avatarTargetWidth(), AVATAR_BASE);
+    const room: number = this.avatarTargetWidth() - this.avatarRing() * 2;
+    return Math.max(AVATAR_BASE, Math.min(raw, room));
   }
 
   // 高度：后到 390。宽先满、高后到，接上顶端贴住屏幕顶后，观感是「两边到边后继续往下长」。
@@ -2373,6 +2379,7 @@ export struct MyProfilePage {
   }
 
   build() {
+    Stack({ alignContent: Alignment.TopEnd }) {
     HdsNavigation(this.profileStack) {
       // 外层 Stack 只为把两颗玻璃钮固定浮在标题栏那一行，不跟着列表滚。
       Stack({ alignContent: Alignment.TopEnd }) {
@@ -2423,7 +2430,6 @@ export struct MyProfilePage {
       // 不裁剪，头像块才能穿到标题栏底下——渐变模糊模糊的正是这部分。
       .clip(false);
 
-        this.headerActions()
       }
       .width('100%')
       .height('100%')
@@ -2495,6 +2501,14 @@ export struct MyProfilePage {
     .bindToScrollable([this.profileScroller])
     .width('100%').height('100%')
     .backgroundColor(mainPageFill(this.appWallpaperOn));
+
+      // 两颗玻璃钮必须放在 HdsNavigation **外面**：标题栏是平台层，覆盖在内容之上，
+      // 会把落在标题栏那一行里的触摸全部吃掉（真机实测：点标题栏区域任何位置都
+      // 到不了内容层的 onClick）。画在 Navigation 内部的按钮看得见、点不着。
+      this.headerActions()
+    }
+    .width('100%')
+    .height('100%');
   }
 }
 
