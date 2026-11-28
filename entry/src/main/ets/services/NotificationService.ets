@@ -1,4 +1,7 @@
 import { TdClient } from '../tdkit/TdClient';
+import { accountRegistry } from '../tdkit/AccountRegistry';
+import { power } from '@kit.BasicServicesKit';
+import { activeChatId } from '../util/notificationPresence';
 import { TdObject, TdRequest, TdError } from '../tdkit/TdTypes';
 import { ChatStore } from '../store/ChatStore';
 import { UserStore } from '../store/UserStore';
@@ -26,6 +29,9 @@ export interface LocalNotice {
   text: string;
   isCall: boolean;
   avatarPath: string; // 会话头像本地路径（''=无，发布方回退默认图标）
+  // 系统通知分组名。同一账号的消息放一组（官方是 messages + account），
+  // 来电不带分组。
+  groupName?: string;
   // 点击通知要定位到的那条消息（0 / 缺省 = 只打开会话）。以前通知只带会话 id，
   // 落点是会话的默认落点——默认落点改成未读锚点 + 小窗口之后，通知那条（最新的）
   // 常常不在窗口里，用户点了通知看不到那条消息。带上 id 走 jumpTo 才是真定位。
@@ -83,6 +89,18 @@ export class NotificationService {
         ? ((message['is_outgoing'] as boolean | undefined) ?? false) : false;
       this.considerFallbackNotice(message, chatId, outgoing);
     }));
+    // 消息被编辑（含媒体 caption 改写）→ 如果改的正是通知上那条，就地更新正文。
+    // 官方 NotificationsController 同样把编辑视为通知生命周期的更新，不另起一条。
+    this.unsubs.push(client.onUpdate('updateMessageContent', (u: TdObject): void => {
+      this.considerEditedMessage((u['chat_id'] as number | undefined) ?? 0,
+        (u['message_id'] as number | undefined) ?? 0,
+        u['new_content'] as TdObject | undefined);
+    }));
+    // 删除/撤回 → 通知上那条没了就撤销；否则保留（同会话还有别的未读）。
+    this.unsubs.push(client.onUpdate('updateDeleteMessages', (u: TdObject): void => {
+      this.considerDeletedMessages((u['chat_id'] as number | undefined) ?? 0,
+        u['message_ids'] as number[] | undefined);
+    }));
     // 分类通知设置变更（通知设置页或其他设备修改）→ 刷新缓存。
     this.unsubs.push(client.onUpdate('updateScopeNotificationSettings',
       (u: TdObject): void => {
@@ -128,14 +146,7 @@ export class NotificationService {
         return;
       }
       const chatId: number = (u['chat_id'] as number | undefined) ?? 0;
-      const shown = this.noticeIdsByChat.get(chatId);
-      if (shown === undefined) {
-        return;
-      }
-      this.noticeIdsByChat.delete(chatId);
-      for (const id of shown) {
-        this.publisher.cancel(id);
-      }
+      this.cancelNoticeForChat(chatId);
     }));
   }
 
@@ -233,8 +244,11 @@ export class NotificationService {
   // 通知发布的唯一来源。本机 td 的 updateNotificationGroup 只在启动同步等
   // 特定时机产出，后台实时消息期间并不推送，因此不能依赖它发布；改为直接
   // 从 updateNewMessage 生成，静音判定用 ChatStore 已同步的 isMuted。
-  // 已发通知按会话记录，会话被读完时统一撤销。
-  private noticeIdsByChat: Map<number, number[]> = new Map();
+  // 每个会话最多一条通知：新消息原地更新（官方 per-dialog notification 的做法），
+  // 已读/删除时按会话撤销，不再堆叠多个 id。
+  private noticeByChat: Map<number, LocalNotice> = new Map();
+  // 编辑更新要复用发布时的发送者前缀，否则群里会把「张三: 」丢掉。
+  private whoByChat: Map<number, string> = new Map();
   // 分类默认静音已搬到 store/ScopeMuteStore——界面也要读它（会话列表画不画
   // 铃铛）。留在服务实例里的那份别人拿不到，结果就是"通知不弹、列表却显示
   // 未静音"这种自相矛盾。
@@ -330,9 +344,91 @@ export class NotificationService {
     return entry === undefined ? true : scopePreviewForKind(entry.kind);
   }
 
+  // 通知 id 必须每个会话稳定且彼此不同：同一个 id 再次 publish 就是原地更新，
+  // 不同会话共用一个 id 会互相覆盖。chatId 是 64 位（群/频道为负），哈希到
+  // 1000..898999，避开来电的 999001。旧公式按 messageId 折叠，小 messageId
+  // 时所有会话都落到 1000。
+  private noticeIdFor(chatId: number): number {
+    let hash: number = 5381;
+    const text: string = `${chatId}`;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+    }
+    return 1000 + (hash % 898000);
+  }
+
+  // 官方语义：只有「屏幕亮着 + 应用在前台 + 当前打开的正是这个会话」才不打扰。
+  // 应用在前台但停在设置页/别的会话时照常通知。power.isActive() 失败时按亮屏处理
+  // （前台且正停在该会话，漏一条通知的代价小于打扰）。
+  private shouldSuppress(chatId: number): boolean {
+    if (!this.isForeground() || activeChatId() !== chatId) {
+      return false;
+    }
+    try {
+      return power.isActive();
+    } catch (e) {
+      return true;
+    }
+  }
+
+  private groupNameFor(): string {
+    // 官方是 messages + 当前账号；账号槽位切换后各账号的通知不混组。
+    return `messages_${accountRegistry.activeSlotId()}`;
+  }
+
+  private cancelNoticeForChat(chatId: number): void {
+    const shown = this.noticeByChat.get(chatId);
+    if (shown === undefined) {
+      return;
+    }
+    this.noticeByChat.delete(chatId);
+    this.whoByChat.delete(chatId);
+    this.publisher.cancel(shown.id);
+  }
+
+  private considerEditedMessage(chatId: number, messageId: number,
+    newContent: TdObject | undefined): void {
+    if (chatId === 0 || messageId === 0 || newContent === undefined) {
+      return;
+    }
+    const shown = this.noticeByChat.get(chatId);
+    if (shown === undefined || (shown.messageId ?? 0) !== messageId) {
+      return;
+    }
+    // 预览关闭时不能借编辑把内容露出来：正文保持通用文案不动。
+    if (!this.previewAllowed(chatId)) {
+      return;
+    }
+    const draft: TdObject = { '@type': 'message', 'content': newContent };
+    const preview: string = formatPreview(draft);
+    const body: NotificationBody = notificationBody(shown.title,
+      this.whoByChat.get(chatId) ?? '', preview, true,
+      str('ns_new_message'), str('ns_new_message_body'));
+    shown.text = body.text;
+    this.publisher.publish(shown);
+  }
+
+  private considerDeletedMessages(chatId: number, messageIds: number[] | undefined): void {
+    if (chatId === 0 || messageIds === undefined) {
+      return;
+    }
+    const shown = this.noticeByChat.get(chatId);
+    if (shown === undefined) {
+      return;
+    }
+    const last: number = shown.messageId ?? 0;
+    if (last !== 0 && messageIds.indexOf(last) >= 0) {
+      // 通知展示的那条被删了。保留一条指向已删除消息的通知只会点空。
+      this.cancelNoticeForChat(chatId);
+    }
+  }
+
   private considerFallbackNotice(message: TdObject | undefined, chatId: number,
     outgoing: boolean): void {
-    if (message === undefined || outgoing || chatId === 0 || this.isForeground()) {
+    if (message === undefined || outgoing || chatId === 0) {
+      return;
+    }
+    if (this.shouldSuppress(chatId)) {
       return;
     }
     // 判定顺序：会话在不在我的列表里 → 本机类型开关 → 服务端（会话/分类）静音。
@@ -344,28 +440,26 @@ export class NotificationService {
     if (messageId === 0) {
       return;
     }
-    // TDLib 通知 id 是小整数；用会话内消息序号压缩到安全范围避免冲突。
-    const noticeId: number = Math.abs(Math.floor(messageId / 1048576)) % 900000 + 1000;
-    const shown: number[] = this.noticeIdsByChat.get(chatId) ?? [];
-    if (shown.indexOf(noticeId) < 0) {
-      this.noticeIdsByChat.set(chatId, [...shown, noticeId]);
-    }
     const preview: string = formatPreview(message);
     const who: string = this.senderPrefix(message, chatId);
     const body: NotificationBody = notificationBody(
       entry !== undefined && entry.title !== '' ? entry.title : str('ns_new_message'),
       who, preview, this.previewAllowed(chatId),
       str('ns_new_message'), str('ns_new_message_body'));
-    this.publisher.publish({
-      id: noticeId,
+    const notice: LocalNotice = {
+      id: this.noticeIdFor(chatId),
       groupId: 0,
       chatId: chatId,
       title: body.title,
       text: body.text,
       isCall: false,
       messageId: messageId,
-      avatarPath: this.senderAvatarPath(message, chatId)
-    });
+      avatarPath: this.senderAvatarPath(message, chatId),
+      groupName: this.groupNameFor()
+    };
+    this.noticeByChat.set(chatId, notice);
+    this.whoByChat.set(chatId, who);
+    this.publisher.publish(notice);
   }
 
   // 群/频道消息的头像应该是发信人的，不是会话的 —— 官方客户端就是这样，

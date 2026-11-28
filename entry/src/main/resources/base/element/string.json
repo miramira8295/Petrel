@@ -3733,6 +3733,78 @@
       "value": "平滑过渡开关"
     },
     {
+      "name": "power_keep_alive",
+      "value": "后台持续运行"
+    },
+    {
+      "name": "power_keep_alive_note",
+      "value": "三种方式互斥，默认关闭。开启后切到后台仍保持消息同步与代理连接；耗电和保活强度按所选方式不同。"
+    },
+    {
+      "name": "power_keep_alive_on",
+      "value": "已开启"
+    },
+    {
+      "name": "power_keep_alive_off",
+      "value": "已关闭"
+    },
+    {
+      "name": "power_keep_alive_starting",
+      "value": "正在开启…"
+    },
+    {
+      "name": "power_keep_alive_unsupported",
+      "value": "当前设备不支持，已保持关闭"
+    },
+    {
+      "name": "power_keep_alive_failed",
+      "value": "开启失败（错误码 %1$d）"
+    },
+    {
+      "name": "power_keep_alive_switch",
+      "value": "后台持续运行方式"
+    },
+    {
+      "name": "power_keep_alive_mode_off",
+      "value": "关闭"
+    },
+    {
+      "name": "power_keep_alive_mode_off_note",
+      "value": "最省电。退到后台后可能延迟收到消息。"
+    },
+    {
+      "name": "power_keep_alive_mode_task",
+      "value": "计算任务保持"
+    },
+    {
+      "name": "power_keep_alive_mode_task_note",
+      "value": "保活最强，耗电和发热明显；部分手机不支持。"
+    },
+    {
+      "name": "power_keep_alive_mode_location",
+      "value": "低功耗定位"
+    },
+    {
+      "name": "power_keep_alive_mode_location_note",
+      "value": "保活弱一档，耗电低；只用于保持后台，不记录位置。"
+    },
+    {
+      "name": "power_keep_alive_current_task",
+      "value": "当前方式：计算任务保持"
+    },
+    {
+      "name": "power_keep_alive_current_location",
+      "value": "当前方式：低功耗定位"
+    },
+    {
+      "name": "power_keep_alive_need_location",
+      "value": "需要定位权限才能使用低功耗保活"
+    },
+    {
+      "name": "power_keep_alive_location_off",
+      "value": "系统定位已关闭，请先打开定位"
+    },
+    {
       "name": "wp_registered_with_id",
       "value": "已注册 · receiver id %1$s"
     },

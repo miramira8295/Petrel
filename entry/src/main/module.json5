@@ -76,6 +76,17 @@
         }
       },
       {
+        // 受限权限：TASK_KEEPING 在手机/平板上需要它，调试签名 profile 里必须带 ACL。
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING_SYSTEM",
+        "reason": "$string:background_running_reason",
+        "usedScene": {
+          "when": "inuse",
+          "abilities": [
+            "EntryAbility"
+          ]
+        }
+      },
+      {
         "name": "ohos.permission.MICROPHONE",
         "reason": "$string:mic_permission_reason",
         "usedScene": {
@@ -146,7 +157,8 @@
           "audioPlayback",
           "audioRecording",
           "voip",
-          "location"
+          "location",
+          "taskKeeping"
         ],
         "exported": true,
         "skills": [

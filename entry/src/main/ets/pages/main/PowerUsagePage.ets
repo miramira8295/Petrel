@@ -1,4 +1,8 @@
 import {
+  KEY_BACKGROUND_KEEP_ALIVE_MODE,
+  KEEP_ALIVE_LOCATION,
+  KEEP_ALIVE_OFF,
+  KEEP_ALIVE_TASK_KEEPING,
   KEY_BATTERY_PERCENT,
   KEY_POWER_ACTIVE,
   KEY_POWER_CALL_ANIMATIONS,
@@ -25,12 +29,18 @@ import {
   setBoolean,
   setNumber
 } from '../../store/AppSettings';
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { COLOR_PRIMARY, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY } from '../../util/theme';
 import { str } from '../../util/strings';
 import { LANGUAGE_EPOCH } from '../../util/appLanguage';
 import { HdsSubDestination } from '../common/HdsSubDestination';
 import { BLUR_MAX_VP, EDGE_OVERLAY_VP, edgeBlurRadiusOf } from '../../util/scrollEdgeBlur';
 import { ScrollEdgeBlurBinder } from '../../util/scrollEdgeBlurModifier';
+import {
+  backgroundKeepAlive, KeepAliveResult,
+  KEEP_ALIVE_REASON_LOCATION_OFF, KEEP_ALIVE_REASON_PERMISSION, KEEP_ALIVE_REASON_UNSUPPORTED
+} from '../../services/BackgroundKeepAlive';
 import {
   EDGE_BLUR_BOTTOM_ON_DEFAULT, EDGE_BLUR_FOLLOW, EDGE_BLUR_ON_DEFAULT, EDGE_BLUR_TOP_ON_DEFAULT,
   KEY_EDGE_BLUR_BOTTOM_ON, KEY_EDGE_BLUR_ON, KEY_EDGE_BLUR_OTHER_BOTTOM, KEY_EDGE_BLUR_OTHER_TOP,
@@ -75,6 +85,10 @@ export struct PowerUsagePage {
   @StorageLink(KEY_POWER_THRESHOLD) threshold: number = POWER_THRESHOLD_DEFAULT;
   @StorageProp(KEY_POWER_ACTIVE) active: boolean = false;
   @StorageProp(KEY_BATTERY_PERCENT) batteryPercent: number = 100;
+  // 后台持续运行：三选一（关闭/计算任务保持/低功耗定位），默认关闭。
+  @StorageLink(KEY_BACKGROUND_KEEP_ALIVE_MODE) keepAliveMode: string = KEEP_ALIVE_OFF;
+  @State private keepAliveBusy: boolean = false;
+  @State private keepAliveHint: string = '';
   @StorageLink(KEY_POWER_ANIMATED_AVATAR) animatedAvatar: boolean = true;
   @StorageLink(KEY_POWER_STICKERS) animatedStickers: boolean = true;
   @StorageLink(KEY_POWER_EMOJI) animatedEmoji: boolean = true;
@@ -449,6 +463,160 @@ export struct PowerUsagePage {
     .backgroundColor(CARD_BG).borderRadius(CARD_RADIUS);
   }
 
+  private keepAliveStatusText(): string {
+    if (this.keepAliveBusy) {
+      return str('power_keep_alive_starting');
+    }
+    if (this.keepAliveHint !== '') {
+      return this.keepAliveHint;
+    }
+    if (this.keepAliveMode === KEEP_ALIVE_TASK_KEEPING) {
+      return str('power_keep_alive_current_task');
+    }
+    if (this.keepAliveMode === KEEP_ALIVE_LOCATION) {
+      return str('power_keep_alive_current_location');
+    }
+    return str('power_keep_alive_off');
+  }
+
+  private keepAliveErrorText(res: KeepAliveResult): string {
+    if (res.reason === KEEP_ALIVE_REASON_UNSUPPORTED) {
+      return str('power_keep_alive_unsupported');
+    }
+    if (res.reason === KEEP_ALIVE_REASON_PERMISSION) {
+      return str('power_keep_alive_need_location');
+    }
+    if (res.reason === KEEP_ALIVE_REASON_LOCATION_OFF) {
+      return str('power_keep_alive_location_off');
+    }
+    // 带参数资源在真机会退化成裸 key，这里手动拼错误码，保证任何语言下都能读到原因。
+    return `${str('power_keep_alive_failed')} (${res.code})`;
+  }
+
+  // 真正申请/停止长时任务。失败一律回到关闭，不保留假的选中态：
+  // 手机端 TASK_KEEPING 缺 ACL 时返回 9800005，这里如实提示。
+  private applyKeepAliveMode(mode: string): void {
+    if (this.keepAliveBusy) {
+      return;
+    }
+    this.keepAliveBusy = true;
+    this.keepAliveHint = '';
+    if (mode === KEEP_ALIVE_OFF) {
+      backgroundKeepAlive.stop().then((): void => {
+        this.keepAliveBusy = false;
+        this.keepAliveMode = KEEP_ALIVE_OFF;
+      }).catch((): void => {
+        this.keepAliveBusy = false;
+        this.keepAliveMode = KEEP_ALIVE_OFF;
+      });
+      return;
+    }
+    backgroundKeepAlive.start(mode).then((res: KeepAliveResult): void => {
+      this.keepAliveBusy = false;
+      if (res.ok) {
+        this.keepAliveMode = mode;
+      } else {
+        this.keepAliveMode = KEEP_ALIVE_OFF;
+        this.keepAliveHint = this.keepAliveErrorText(res);
+      }
+    }).catch((): void => {
+      this.keepAliveBusy = false;
+      this.keepAliveMode = KEEP_ALIVE_OFF;
+      this.keepAliveHint = `${str('power_keep_alive_failed')} (-1)`;
+    });
+  }
+
+  // 低功耗模式必须先拿到定位权限；用户拒绝就停在原选择，只提示不弹 toast。
+  private selectKeepAliveMode(mode: string): void {
+    if (this.keepAliveBusy || this.keepAliveMode === mode) {
+      return;
+    }
+    this.keepAliveHint = '';
+    if (mode !== KEEP_ALIVE_LOCATION) {
+      this.applyKeepAliveMode(mode);
+      return;
+    }
+    const context = getContext(this) as common.UIAbilityContext;
+    const permissions: Permissions[] =
+      ['ohos.permission.APPROXIMATELY_LOCATION', 'ohos.permission.LOCATION'];
+    abilityAccessCtrl.createAtManager().requestPermissionsFromUser(context, permissions)
+      .then((result): void => {
+        if (result.authResults.length > 0 && result.authResults[0] === 0) {
+          this.applyKeepAliveMode(mode);
+          return;
+        }
+        this.keepAliveHint = str('power_keep_alive_need_location');
+      })
+      .catch((_e: BusinessError): void => {
+        this.keepAliveHint = str('power_keep_alive_need_location');
+      });
+  }
+
+  @Builder
+  private keepAliveOption(mode: string, title: string, note: string) {
+    Row({ space: 12 }) {
+      Stack() {
+        Row()
+          .width(20).height(20).borderRadius(10)
+          .border({
+            width: 1.5,
+            color: this.keepAliveMode === mode ? COLOR_PRIMARY : '#C7C7CC'
+          });
+        if (this.keepAliveMode === mode) {
+          Row().width(10).height(10).borderRadius(5).backgroundColor(COLOR_PRIMARY);
+        }
+      }
+      .width(22).height(22);
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(15).fontColor(COLOR_TEXT_PRIMARY);
+        Text(note)
+          .fontSize(12).fontColor(COLOR_TEXT_SECONDARY);
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1);
+    }
+    .width('100%')
+    .padding({ left: 18, right: 16, top: 10, bottom: 10 })
+    .backgroundColor(this.keepAliveMode === mode ? '#0A007DFF' : Color.Transparent)
+    .onClick((): void => {
+      this.selectKeepAliveMode(mode);
+    });
+  }
+
+  @Builder
+  keepAliveCard() {
+    Column() {
+      Row({ space: 12 }) {
+        Column({ space: 3 }) {
+          Text(str('power_keep_alive'))
+            .fontSize(16).fontColor(COLOR_TEXT_PRIMARY);
+          Text(this.keepAliveStatusText())
+            .fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+            .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis });
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1);
+        if (this.keepAliveBusy) {
+          LoadingProgress().width(22).height(22).color(COLOR_PRIMARY);
+        }
+      }
+      .width('100%')
+      .padding({ left: 18, right: 16, top: 14, bottom: 6 });
+      Divider().strokeWidth(0.7).color($r('app.color.divider')).margin({ left: 18, right: 18 });
+      this.keepAliveOption(KEEP_ALIVE_OFF, str('power_keep_alive_mode_off'),
+        str('power_keep_alive_mode_off_note'));
+      this.keepAliveOption(KEEP_ALIVE_TASK_KEEPING, str('power_keep_alive_mode_task'),
+        str('power_keep_alive_mode_task_note'));
+      this.keepAliveOption(KEEP_ALIVE_LOCATION, str('power_keep_alive_mode_location'),
+        str('power_keep_alive_mode_location_note'));
+      Text(str('power_keep_alive_note'))
+        .fontSize(13).fontColor(COLOR_TEXT_SECONDARY)
+        .width('100%').padding({ left: 18, right: 18, top: 6, bottom: 13 });
+    }
+    .width('100%').backgroundColor(CARD_BG).borderRadius(CARD_RADIUS);
+  }
+
   build() {
     Column() {
       HdsSubDestination({ title: $r('app.string.settings_power'), scroller: this.hdsScroller }) {
@@ -463,6 +631,7 @@ export struct PowerUsagePage {
           Text($r('app.string.power_smooth_note'))
             .fontSize(13).fontColor(COLOR_TEXT_SECONDARY).width('100%')
             .padding({ left: 15, right: 15 });
+          this.keepAliveCard();
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: EDGE_OVERLAY_VP, bottom: this.bottomSafe + 24 });

@@ -12,6 +12,8 @@ class CallKeepAliveTask {
   private started: boolean = false;
   private wantsRunning: boolean = false;
   private operation: Promise<void> = Promise.resolve();
+  // 只停自己这一条长时任务；无 id 的 stop 会连后台保活一起取消。
+  private taskId: number = -1;
   // 系统要求 VoIP 通话持有已激活的 voice_call AVSession，否则切后台后
   // 通话音频会被静音（与直播的 audioPlayback 约束同源）。
   private session: avSession.AVSession | null = null;
@@ -35,14 +37,17 @@ class CallKeepAliveTask {
       };
       const agent = await wantAgent.getWantAgent(info);
       try {
-        await backgroundTaskManager.startBackgroundRunning(current, ['voip'], agent);
+        const task: backgroundTaskManager.ContinuousTaskNotification =
+          await backgroundTaskManager.startBackgroundRunning(current, ['voip'], agent);
+        this.taskId = task.continuousTaskId ?? -1;
         logI('[CallKeepAliveTask] started mode=voip');
       } catch (caught) {
         // 部分机型/版本对 voip 类型有额外校验；退化为 audioPlayback，
         // 保证通话音频在后台仍然存活。
         logE(`[CallKeepAliveTask] voip failed: ${(caught as Error).message}`);
-        await backgroundTaskManager.startBackgroundRunning(
-          current, ['audioPlayback'], agent);
+        const fallbackTask: backgroundTaskManager.ContinuousTaskNotification =
+          await backgroundTaskManager.startBackgroundRunning(current, ['audioPlayback'], agent);
+        this.taskId = fallbackTask.continuousTaskId ?? -1;
         logI('[CallKeepAliveTask] started mode=audioPlayback (fallback)');
       }
       this.started = true;
@@ -95,7 +100,13 @@ class CallKeepAliveTask {
       return;
     }
     await this.destroySession();
-    await backgroundTaskManager.stopBackgroundRunning(this.context);
+    const id: number = this.taskId;
+    this.taskId = -1;
+    if (id >= 0) {
+      await backgroundTaskManager.stopBackgroundRunning(this.context, id);
+    } else {
+      await backgroundTaskManager.stopBackgroundRunning(this.context);
+    }
     this.started = false;
     logI('[CallKeepAliveTask] stopped');
   }

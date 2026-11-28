@@ -18,6 +18,7 @@ class MediaPlaybackKeepAlive {
   private started: boolean = false;
   private session: avSession.AVSession | null = null;
   private operation: Promise<void> = Promise.resolve();
+  private taskId: number = -1;
   // 曲目信息的订阅。系统媒体卡片（下拉状态栏那张）原来只拿到通用文案
   // 「正在播放」——setAVMetadata 只在建会话时调过一次，且没有曲名/演唱者/封面。
   // 现在跟着 nowPlayingChannel 走，换歌就刷新。
@@ -43,7 +44,9 @@ class MediaPlaybackKeepAlive {
         actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
       };
       const agent = await wantAgent.getWantAgent(info);
-      await backgroundTaskManager.startBackgroundRunning(current, ['audioPlayback'], agent);
+      const task: backgroundTaskManager.ContinuousTaskNotification =
+        await backgroundTaskManager.startBackgroundRunning(current, ['audioPlayback'], agent);
+      this.taskId = task.continuousTaskId ?? -1;
       this.started = true;
       await this.ensureSession(current);
       logI(`[MediaPlaybackKeepAlive] started kinds=${Array.from(this.holds.values()).join(',')}`);
@@ -71,7 +74,13 @@ class MediaPlaybackKeepAlive {
       return;
     }
     await this.destroySession();
-    await backgroundTaskManager.stopBackgroundRunning(this.context);
+    const id: number = this.taskId;
+    this.taskId = -1;
+    if (id >= 0) {
+      await backgroundTaskManager.stopBackgroundRunning(this.context, id);
+    } else {
+      await backgroundTaskManager.stopBackgroundRunning(this.context);
+    }
     this.started = false;
     logI('[MediaPlaybackKeepAlive] stopped');
   }

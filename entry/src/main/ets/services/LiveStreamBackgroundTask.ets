@@ -15,6 +15,7 @@ class LiveStreamBackgroundTask {
   private wantsRunning: boolean = false;
   private recording: boolean = false;
   private operation: Promise<void> = Promise.resolve();
+  private taskId: number = -1;
   // The live renderer plays a STREAM_USAGE_MOVIE stream. The system mutes and
   // freezes such streams in the background unless the app holds BOTH an
   // audioPlayback continuous task AND an activated AVSession, so the session
@@ -48,7 +49,9 @@ class LiveStreamBackgroundTask {
         actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
       };
       const agent = await wantAgent.getWantAgent(info);
-      await backgroundTaskManager.startBackgroundRunning(current, this.modes(), agent);
+      const task: backgroundTaskManager.ContinuousTaskNotification =
+        await backgroundTaskManager.startBackgroundRunning(current, this.modes(), agent);
+      this.taskId = task.continuousTaskId ?? -1;
       this.started = true;
       await this.ensureSession(current);
       logI(`[LiveStreamBackgroundTask] started modes=${this.modes().join(',')}`);
@@ -82,7 +85,13 @@ class LiveStreamBackgroundTask {
   private async stopCurrent(): Promise<void> {
     if (!this.started || this.context === null) { return; }
     await this.destroySession();
-    await backgroundTaskManager.stopBackgroundRunning(this.context);
+    const id: number = this.taskId;
+    this.taskId = -1;
+    if (id >= 0) {
+      await backgroundTaskManager.stopBackgroundRunning(this.context, id);
+    } else {
+      await backgroundTaskManager.stopBackgroundRunning(this.context);
+    }
     this.started = false;
     logI('[LiveStreamBackgroundTask] stopped');
   }

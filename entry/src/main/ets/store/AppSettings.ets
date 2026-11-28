@@ -116,6 +116,22 @@ export const KEY_POWER_EFFECT_REACTION: string = 'powerEffectReaction';
 export const KEY_POWER_EFFECT_REPLY: string = 'powerEffectReply';
 export const KEY_POWER_EFFECT_MENU: string = 'powerEffectMenu';
 export const KEY_POWER_EFFECT_BLUR: string = 'powerEffectBlur';
+// 后台持续运行。默认关闭，用户二选一：
+//   · taskKeeping：计算任务保持（TASK_KEEPING），保活最强、耗电最高；
+//   · location：低功耗定位（LOCATION + 低频定位），保活较弱、耗电低。
+// 旧布尔键保留作迁移与兼容：只有任何模式开启时才为 true。
+export const KEY_BACKGROUND_KEEP_ALIVE: string = 'backgroundKeepAlive';
+export const KEY_BACKGROUND_KEEP_ALIVE_MODE: string = 'backgroundKeepAliveMode';
+export const KEEP_ALIVE_OFF: string = 'off';
+export const KEEP_ALIVE_TASK_KEEPING: string = 'taskKeeping';
+export const KEEP_ALIVE_LOCATION: string = 'location';
+
+export function normalizeKeepAliveMode(mode: string): string {
+  if (mode === KEEP_ALIVE_TASK_KEEPING || mode === KEEP_ALIVE_LOCATION) {
+    return mode;
+  }
+  return KEEP_ALIVE_OFF;
+}
 // Data & storage. The current network is supplied by NetworkStateService and
 // is intentionally kept in AppStorage only; user choices below are persisted.
 export const KEY_CURRENT_NETWORK_TYPE: string = 'currentNetworkType'; // none | wifi | mobile | roaming | vpn | other
@@ -469,7 +485,8 @@ const DATA_BOOLEAN_FALSE_DEFAULTS: string[] = [
   KEY_PROXY_AUTO_SWITCH,
   KEY_TRANSLATE_CHATS,
   KEY_TRANSLATE_REPLACE_ORIGINAL,
-  KEY_FORCE_SINGLE_COLUMN
+  KEY_FORCE_SINGLE_COLUMN,
+  KEY_BACKGROUND_KEEP_ALIVE
 ];
 
 function applyPowerState(percent: number): void {
@@ -657,6 +674,17 @@ export async function initSettings(context: common.Context): Promise<void> {
     for (const key of DATA_STRING_KEYS) {
       AppStorage.setOrCreate(key, await s.get(key, '') as string);
     }
+    // 保活模式：空值表示老版本只存过布尔键，按 true 迁移成计算任务保持。
+    // 显式写过 off 的不能被旧布尔值重新打开。
+    const storedKeepAliveMode: string = await s.get(KEY_BACKGROUND_KEEP_ALIVE_MODE, '') as string;
+    const legacyKeepAlive: boolean = await s.get(KEY_BACKGROUND_KEEP_ALIVE, false) as boolean;
+    const keepAliveMode: string = storedKeepAliveMode === '' && legacyKeepAlive
+      ? KEEP_ALIVE_TASK_KEEPING
+      : normalizeKeepAliveMode(storedKeepAliveMode);
+    AppStorage.setOrCreate(KEY_BACKGROUND_KEEP_ALIVE_MODE, keepAliveMode);
+    if (keepAliveMode !== KEEP_ALIVE_OFF) {
+      AppStorage.setOrCreate(KEY_BACKGROUND_KEEP_ALIVE, true);
+    }
     // 「最近我主动聊过谁」的名单：从落盘值灌进内存，并把写回的钩子交出去。
     // 系统分享的目标排序要用它（见 util/recentOutgoing）。
     initRecentOutgoing(AppStorage.get<string>(KEY_RECENT_OUTGOING) ?? '',
@@ -726,6 +754,7 @@ export async function initSettings(context: common.Context): Promise<void> {
     for (const key of DATA_STRING_KEYS) {
       AppStorage.setOrCreate(key, '');
     }
+    AppStorage.setOrCreate(KEY_BACKGROUND_KEEP_ALIVE_MODE, KEEP_ALIVE_OFF);
     for (const setting of WALLPAPER_NUMBER_SETTINGS) {
       AppStorage.setOrCreate(setting.key, setting.defaultValue);
     }

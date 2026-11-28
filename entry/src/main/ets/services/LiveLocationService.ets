@@ -44,6 +44,8 @@ class LiveLocationService {
   private periodSec: number = 0;
   private timer: number = -1;
   private taskStarted: boolean = false;
+  // 只停自己这条 location 任务，不能连后台保活的 location 任务一起取消。
+  private taskId: number = -1;
   private unsubSendSucceeded: (() => void) | null = null;
   private unsubActive: (() => void) | null = null;
   private prefs: preferences.Preferences | null = null;
@@ -314,7 +316,9 @@ class LiveLocationService {
     wantAgent.getWantAgent(info).then((agent: Object): Promise<void> => {
       // 用字符串数组的重载，和仓库里其它长时任务保持一致。
       return backgroundTaskManager.startBackgroundRunning(context, ['location'], agent)
-        .then((): void => {});
+        .then((info: backgroundTaskManager.ContinuousTaskNotification): void => {
+          this.taskId = info.continuousTaskId ?? -1;
+        });
     }).then((): void => {
       this.taskStarted = true;
     }).catch((e: Object): void => {
@@ -329,7 +333,12 @@ class LiveLocationService {
       return;
     }
     this.taskStarted = false;
-    backgroundTaskManager.stopBackgroundRunning(context).catch((e: Object): void => {
+    const id: number = this.taskId;
+    this.taskId = -1;
+    const stopping: Promise<void> = id >= 0
+      ? backgroundTaskManager.stopBackgroundRunning(context, id)
+      : backgroundTaskManager.stopBackgroundRunning(context);
+    stopping.catch((e: Object): void => {
       logE(`LiveLocationService.stopBackgroundRunning failed: ${JSON.stringify(e)}`);
     });
   }

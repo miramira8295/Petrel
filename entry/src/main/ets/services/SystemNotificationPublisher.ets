@@ -67,6 +67,12 @@ export class SystemNotificationPublisher implements NotificationPublisher {
         },
         wantAgent: agent
       };
+      // 同账号的消息进同一个系统通知组（官方是 messages + account），通知中心
+      // 会把它们折叠成一组；来电/密钥聊天不带分组，各占一条。
+      const group: string = notice.groupName ?? '';
+      if (group !== '') {
+        request.groupName = group;
+      }
       // 会话头像：largeIcon 是展开态右侧大图标，overlayIcon 是横幅上叠加在
       // 应用图标处的会话头像（IM 类通知的常见样式）。两者都设，覆盖顶部弹出
       // 横幅与通知中心两种形态；无头像时留空，系统回退应用图标。

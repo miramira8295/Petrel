@@ -54,6 +54,7 @@ import { curves, promptAction, UIContext } from '@kit.ArkUI';
 import { MessageDeleteSession } from './MessageDeleteSession';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { setScrollActive } from '../../util/scrollEffects';
+import { setActiveChatId } from '../../util/notificationPresence';
 import { rememberRecentSticker } from '../../store/StickerApi';
 import { openMiniAppPage, openMessageMiniApp } from '../../util/miniAppNav';
 import { InlineResultRow, sendInlineResult } from '../../store/BotApi';
@@ -3565,6 +3566,8 @@ export struct ChatPage {
   }
 
   private handleWillHide(): void {
+    // 离开会话即撤销「前台免打扰」资格：此后这个会话的新消息照常通知。
+    setActiveChatId(0);
     this.remoteDelete.flush();
     cancelClearChatDetailHiding(true);
     this.inputSwitch.cancel();
@@ -3592,6 +3595,11 @@ export struct ChatPage {
     this.scrollResumeCapturedOnHide = false;
     markChatDestShown(this.chatDestToken);
     this.surfaceActive = true;
+    // 只有真正显示出来、且 chatId 已经由 applyRouteParams 赋好值时才登记；
+    // 通知层会再叠加「屏幕亮」才抑制，见 NotificationService.shouldSuppress。
+    if (this.chatId !== 0) {
+      setActiveChatId(this.chatId);
+    }
 
     // 回到这一页（或者退场被取消了）：放开停车闸，头像该动的继续动。
     parkSenderAnimations(false);

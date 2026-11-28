@@ -23,9 +23,13 @@ import { clearLinkPreviewPresentationCache } from '../util/linkPreview';
 import { refreshLocale } from '../util/intlFormat';
 import { bumpLanguageEpoch } from '../util/appLanguage';
 import { backgroundGraceTask } from '../services/BackgroundGraceTask';
+import { backgroundKeepAlive, KeepAliveResult } from '../services/BackgroundKeepAlive';
 import { startCrashWatch } from '../services/crashReport';
 import { initDiagLog } from '../util/log';
-import { initSettings, refreshPowerSavingState, KEY_CACHE_LIMIT } from '../store/AppSettings';
+import {
+  initSettings, refreshPowerSavingState, KEY_BACKGROUND_KEEP_ALIVE_MODE,
+  KEEP_ALIVE_OFF, KEY_CACHE_LIMIT
+} from '../store/AppSettings';
 import { migrateLegacyAppWallpaperStates } from '../store/ChatBackgroundStore';
 import { CACHE_LIMIT_DEFAULT, shouldTrimNow } from '../store/CacheLimit';
 import { applyCacheLimit } from '../store/StorageApi';
@@ -101,6 +105,18 @@ export default class EntryAbility extends UIAbility {
     initSettings(this.context).then((): void => {
       migrateLegacyAppWallpaperStates();
       proxyAutoSwitchService.settingsChanged();
+      // 后台保活是显式选项：只有上次真的选过模式才恢复。上下文要在这里注入，
+      // 用户之后在「省电 → 后台持续运行」里切换时直接可用。
+      backgroundKeepAlive.init(this.context);
+      const keepAliveMode: string =
+        AppStorage.get<string>(KEY_BACKGROUND_KEEP_ALIVE_MODE) ?? KEEP_ALIVE_OFF;
+      if (keepAliveMode !== KEEP_ALIVE_OFF) {
+        // 失败时服务内部会把模式回退成 off 并持久化：换设备、撤回定位权限、
+        // 系统关掉定位后都不该在下次启动继续重试。这里只负责发起。
+        backgroundKeepAlive.start(keepAliveMode).then((_res: KeepAliveResult): void => {
+        }).catch((): void => {
+        });
+      }
     }).catch((error: Error): void => {
       // initSettings 自己已经装好默认值；这里防住未来实现改成向外抛错时的未处理
       // Promise，启动不能因为一次设置迁移失败而中断。
@@ -367,6 +383,8 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    // 进程都要没了，常驻任务没有意义；撤掉通知栏里那条「正在运行」。
+    backgroundKeepAlive.stopForShutdown().then((): void => {}).catch((): void => {});
     // 保存任务全吊在这个 ability 的 context 上，ability 一没它们就都是死的，
     // 通知栏里那条进度不撤就永远停在原地（用户转述："总是停留在通知栏"）。
     cancelLiveDownloadNotifications();

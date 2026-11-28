@@ -384,6 +384,7 @@ class DownloadTransferKeepAlive {
   private nextToken: number = 1;
   private started: boolean = false;
   private operation: Promise<void> = Promise.resolve();
+  private taskId: number = -1;
 
   acquire(context: common.UIAbilityContext): number {
     const token: number = this.nextToken++;
@@ -404,7 +405,9 @@ class DownloadTransferKeepAlive {
         actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
       };
       const agent = await wantAgent.getWantAgent(info);
-      await backgroundTaskManager.startBackgroundRunning(current, ['dataTransfer'], agent);
+      const task: backgroundTaskManager.ContinuousTaskNotification =
+        await backgroundTaskManager.startBackgroundRunning(current, ['dataTransfer'], agent);
+      this.taskId = task.continuousTaskId ?? -1;
       this.started = true;
       logI(`[DownloadTransfer] background task started active=${this.activeTokens.size}`);
       if (this.activeTokens.size === 0) {
@@ -428,7 +431,13 @@ class DownloadTransferKeepAlive {
       return;
     }
     try {
-      await backgroundTaskManager.stopBackgroundRunning(this.context);
+      const id: number = this.taskId;
+      this.taskId = -1;
+      if (id >= 0) {
+        await backgroundTaskManager.stopBackgroundRunning(this.context, id);
+      } else {
+        await backgroundTaskManager.stopBackgroundRunning(this.context);
+      }
       logI('[DownloadTransfer] background task stopped');
     } finally {
       this.started = false;
