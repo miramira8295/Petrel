@@ -101,8 +101,9 @@ export struct DropHoverOverlay {
         .width(64)
         .height(64)
 
-        Text(str(this.state.sendMode === null ? 'drop_release_unknown' :
-          (this.state.sendMode ? 'drop_release_send' : 'drop_release_draft')))
+        // 记录还没到（null）时按「松手发送」预告：中转站/小艺拖进来的多半是要发送的
+        // 文件，不能让用户看到「松手接收内容」这种没有信息量的文案。
+        Text(str(this.state.sendMode === false ? 'drop_release_draft' : 'drop_release_send'))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor(COLOR_TEXT_PRIMARY)

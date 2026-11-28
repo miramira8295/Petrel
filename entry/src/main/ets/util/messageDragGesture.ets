@@ -17,19 +17,20 @@ export class MessageDragGesture {
   private finished: boolean = false;
   private held: boolean = false;
   private menuOpened: boolean = false;
+  private selectArmed: boolean = false;
 
   reset(): void {
     this.started = -1; this.x = 0; this.y = 0; this.maxDistance = 0;
     this.touch = false; this.moved = false; this.earlyMove = false;
     this.claimed = false; this.finished = false; this.held = false;
-    this.menuOpened = false;
+    this.menuOpened = false; this.selectArmed = false;
   }
 
   begin(x: number, y: number, now: number, touch: boolean = false): void {
     this.started = now; this.x = x; this.y = y; this.maxDistance = 0;
     this.touch = touch; this.moved = false; this.earlyMove = false;
     this.claimed = false; this.finished = false; this.held = false;
-    this.menuOpened = false;
+    this.menuOpened = false; this.selectArmed = false;
   }
 
   prefersDrag(now: number): boolean {
@@ -55,6 +56,17 @@ export class MessageDragGesture {
     }
   }
 
+  // Tap-first menus must not claim the gesture at the 420ms hold mark, otherwise
+  // the finger can never turn the same hold into a drag. Arm instead: moving on
+  // claims the gesture and starts the drag; lifting in place opens multi-select.
+  markSelectArmed(): void {
+    if (this.started >= 0 && !this.finished && !this.claimed) {
+      this.held = true;
+      this.menuOpened = true;
+      this.selectArmed = true;
+    }
+  }
+
   hasOpenedMenu(): boolean {
     return this.menuOpened && !this.claimed && !this.finished;
   }
@@ -62,6 +74,7 @@ export class MessageDragGesture {
   claim(): void {
     this.claimed = true;
     this.menuOpened = false;
+    this.selectArmed = false;
   }
 
   // Mouse drags start at the native threshold; touch drags require a stationary
@@ -86,7 +99,23 @@ export class MessageDragGesture {
       this.started >= 0 && !this.earlyMove && now - this.started >= MESSAGE_HOLD_MENU_MS);
     const invoke: boolean = !this.finished && !this.menuOpened && held &&
       !canceled && !this.claimed && !this.moved;
-    this.held = held; this.finished = true; this.menuOpened = false;
-    return invoke;
+    const select: boolean = !this.finished && this.selectArmed && !canceled && !this.claimed &&
+      this.maxDistance < MESSAGE_TOUCH_DRAG_DISTANCE_VP;
+    this.held = held; this.finished = true; this.menuOpened = false; this.selectArmed = false;
+    return invoke || select;
   }
+}
+
+// 单击出菜单模式下，长按会**立刻**进入多选（用户要求保留这个反馈），但被长按
+// 的那一行必须在这根手指抬起前继续可拖：否则多选一开，气泡就屏蔽触摸、拖拽
+// 再也起不来。这个模块级标记只放行这一条消息，别的行仍按多选规则屏蔽。
+let armedDragMessageId: number = 0;
+export function armMessageDrag(messageId: number): void {
+  armedDragMessageId = messageId > 0 ? messageId : 0;
+}
+export function disarmMessageDrag(messageId: number = 0): void {
+  if (messageId <= 0 || armedDragMessageId === messageId) { armedDragMessageId = 0; }
+}
+export function isMessageDragArmed(messageId: number): boolean {
+  return armedDragMessageId > 0 && armedDragMessageId === messageId;
 }

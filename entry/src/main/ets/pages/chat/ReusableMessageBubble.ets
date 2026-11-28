@@ -102,6 +102,11 @@ export interface MessageBubbleActions {
   onViewSenderHistory: (senderId: number) => void;
   onReportMsg: (messageId: number) => void;
   onSelectMessages: (messageIds: number[]) => void;
+  // 单击出菜单模式：长按先亮多选栏（预览），抬手才真正进多选；拖拽走 onCancelSelection。
+  onPreviewMessages?: (messageIds: number[]) => void;
+  onCancelPreview?: () => void;
+  // 长按进多选后手指继续拖动：拖动真正开始时退出多选，回到正常聊天态。
+  onCancelSelection?: () => void;
   // 相册逐格勾选：只切这一条。整行切换仍走 onSelectMessages / 行点击。
   onToggleSelectedMessage: (messageId: number) => void;
   onDeleteMsg: (messageId: number) => void;

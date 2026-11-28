@@ -1,7 +1,9 @@
 import { DissolveDeleteEffect } from '../common/DissolveDeleteEffect';
-import { MESSAGE_HOLD_MENU_MS, MessageDragGesture } from '../../util/messageDragGesture';
-import { configureMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
-import { messageDragType } from '../../util/messageDrag';
+import { MESSAGE_HOLD_MENU_MS, MessageDragGesture, armMessageDrag, disarmMessageDrag, isMessageDragArmed } from '../../util/messageDragGesture';
+import { configureMessageDrag, endMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
+import { messageDragContentReady, messageDragType } from '../../util/messageDrag';
+import { showToast } from '../../util/toast';
+import { str } from '../../util/strings';
 import { tableScrollTouched } from '../../util/tableTouchChannel';
 import { JUMP_FOCUS_SCALE } from '../../util/bubbleFocusChannel';
 import { MessageMenuTransitions } from '../../util/messageMenuTransitions';
@@ -182,7 +184,21 @@ export struct DrawnContentRow {
   }
 
 
-  private canDragMessage(): boolean { return !this.data.selectionActive && !this.data.editingActive && this.group.memberIds.length === 1 && this.msg.id > 0 && messageDragType(this.msg.contentType) !== ''; }
+  private canDragMessage(): boolean { return (!this.data.selectionActive || isMessageDragArmed(this.msg.id)) && !this.data.editingActive && this.group.memberIds.length === 1 && this.msg.id > 0 && messageDragType(this.msg.contentType) !== ''; }
+
+  private dragNoticeAt: number = 0;
+
+  private dragContentReady(): boolean {
+    return messageDragContentReady(messageDragType(this.msg.contentType), this.msg.photoPath,
+      this.msg.photoFullPath, this.msg.videoPath);
+  }
+
+  private notifyDragNeedsDownload(): void {
+    const now = Date.now();
+    if (now - this.dragNoticeAt < 1500) { return; }
+    this.dragNoticeAt = now;
+    showToast(str('drag_download_first'), 2500);
+  }
 
   private onDragSourceTouch(event: TouchEvent): void {
     if (!this.canDragMessage()) { return; }
@@ -193,21 +209,34 @@ export struct DrawnContentRow {
       this.recordMenuOffset(touch.x, Number(event.target.area.width));
     } else if (event.type === TouchType.Cancel || event.touches.length > 1) {
       this.dragGesture.end(now, true);
+      disarmMessageDrag(this.msg.id);
     } else if (event.type === TouchType.Move && touch !== undefined) {
-      if (this.dragGesture.shouldStartTouchDrag(touch.windowX, touch.windowY, now) &&
-        (!this.context.gestureClaimed || this.dragGesture.hasOpenedMenu()) && !tableScrollTouched()) {
+      const wantsDrag: boolean = this.dragGesture.shouldStartTouchDrag(touch.windowX, touch.windowY, now);
+      if (wantsDrag && !this.dragContentReady()) {
+        // 手指已经做出拖拽动作但文件没下载：明确提示先下载，避免拖出空内容。
+        this.dragGesture.reset();
+        this.notifyDragNeedsDownload();
+        return;
+      }
+      if (wantsDrag &&
+        (!this.context.gestureClaimed || this.dragGesture.hasOpenedMenu() || isMessageDragArmed(this.msg.id)) && !tableScrollTouched()) {
         this.dragGesture.claim();
         if (startMessageTouchDrag(this.getUIContext(), touch.id ?? 0, this.data.chatId, this.msg.id,
           messageDragType(this.msg.contentType), `dissolve-delete-message-${this.data.chatId}-${this.msg.rowId}`,
-          (): void => { this.draggingMessage = false; })) {
+          (): void => { this.draggingMessage = false; }, this.msg.text !== '', this.msg.text)) {
           this.draggingMessage = true;
           this.context.gestureClaimed = true;
           this.context.msgContextMenuShown = false;
+          const cancelSelection: (() => void) | undefined = this.actions.onCancelSelection;
+          if (cancelSelection !== undefined) { cancelSelection(); }
         }
       }
     } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       if (touch !== undefined) { this.dragGesture.move(touch.windowX, touch.windowY, now); }
       if (this.dragGesture.end(now, event.type === TouchType.Cancel)) { this.onLongPress(); }
+      disarmMessageDrag(this.msg.id);
+      const cancelPreview: (() => void) | undefined = this.actions.onCancelPreview;
+      if (cancelPreview !== undefined) { cancelPreview(); }
     }
   }
 
@@ -245,6 +274,15 @@ export struct DrawnContentRow {
       return;
     }
     if (policy.longPressSelects) {
+      if (event !== undefined && this.canDragMessage()) {
+        // 长按只亮预览，抬手才真正进多选；拖拽不受多选布局影响。
+        armMessageDrag(this.msg.id);
+        const preview: ((ids: number[]) => void) | undefined = this.actions.onPreviewMessages;
+        if (preview !== undefined) {
+          preview(this.group.memberIds);
+          return;
+        }
+      }
       this.actions.onSelectMessages(this.group.memberIds);
     }
   }
@@ -457,15 +495,16 @@ export struct DrawnContentRow {
           .draggable(this.canDragMessage())
           .dragPreviewOptions({}, { isLiftingDisabled: true })
           .onDragStart((e: DragEvent): DragItemInfo => {
-            if (!this.canDragMessage() || !this.dragGesture.canStartDrag() ||
-              (this.context.gestureClaimed && !this.dragGesture.hasOpenedMenu()) || tableScrollTouched()) {
+            if (!this.canDragMessage() || !this.dragContentReady() || !this.dragGesture.canStartDrag() ||
+              (this.context.gestureClaimed && !this.dragGesture.hasOpenedMenu() && !isMessageDragArmed(this.msg.id)) || tableScrollTouched()) {
               e.setResult(DragResult.DRAG_CANCELED); return {};
             }
             this.dragGesture.claim(); this.draggingMessage = true; this.context.gestureClaimed = true;
             this.context.msgContextMenuShown = false;
-            return configureMessageDrag(e, this.data.chatId, this.msg.id, messageDragType(this.msg.contentType));
+            return configureMessageDrag(e, this.data.chatId, this.msg.id,
+              messageDragType(this.msg.contentType), this.msg.text !== '', this.msg.text);
           })
-          .onDragEnd((): void => { this.draggingMessage = false; })
+          .onDragEnd((): void => { disarmMessageDrag(this.msg.id); endMessageDrag(); this.draggingMessage = false; const cp: (() => void) | undefined = this.actions.onCancelPreview; if (cp !== undefined) { cp(); } })
           .bindContextMenu(this.context.msgContextMenuShown, this.menu(), {
             offset: { x: this.context.menuOffsetX, y: 0 },
             preview: this.hasLiveVideoSurface() || this.compactMenuContext() ? MenuPreviewMode.NONE : MenuPreviewMode.IMAGE,

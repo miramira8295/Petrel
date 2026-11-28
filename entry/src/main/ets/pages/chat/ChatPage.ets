@@ -278,7 +278,7 @@ import { conversationScopeId, conversationScopeKey } from '../../util/messageTop
 import { navigateToSearch } from '../../util/searchNav';
 import { navigateToSetting } from '../../util/settingsNav';
 import { getActiveTdAccountSlot, getActiveTdUserId } from '../../tdkit/Globals';
-import { isSameChatMessageDragExtra } from '../../util/messageDragOrigin';
+import { isMessageDragActive, isMessageDragExtra } from '../../util/messageDragOrigin';
 import { DropHoverOverlay } from './DropHoverOverlay';
 import { DropHoverState } from './DropHoverState';
 import {
@@ -710,6 +710,10 @@ export struct ChatPage {
             reportFlowUiFor(this.getUIContext()));
         },
         onSelectMessages: (messageIds: number[]): void => { this.selection.selectRow(messageIds); },
+        // 长按进多选后继续拖动：先从多选态退出，再让拖拽接管，避免拖拽期间行被屏蔽。
+        onCancelSelection: (): void => { this.selection.exit(); },
+        onPreviewMessages: (messageIds: number[]): void => { this.selection.beginPreview(messageIds); },
+        onCancelPreview: (): void => { this.selection.cancelPreview(); },
         // 相册逐格勾选：只切这一条。已经在多选态才有意义，非多选态由长按进入。
         onToggleSelectedMessage: (messageId: number): void => {
           this.selection.toggleMember(messageId);
@@ -2377,11 +2381,13 @@ export struct ChatPage {
   }
 
   // 分享落地要用到的页面能力。两档共用一份。
-  // 拖拽悬停提示的显隐。应用内拖消息也会走到这里，那种拖拽的意思是「搬动这条
-  // 消息」，不能提示「松手即发送」——和 ChatDropReceiver 里的排除判据一致。
+  // 拖拽悬停提示的显隐。拖拽源是本应用的消息（任意会话）时不画接收提示：
+  // 那种拖拽的去向（中转站、小艺、别的会话）在起拖时已经确定，不需要再提示。
+  // 外部拖入（中转站→聊天）保持原有提示。
   private setDropHover(visible: boolean, extraParams?: string, sendMode: boolean | null = null): void {
     if (this.dropHoverHideTimer >= 0) { clearTimeout(this.dropHoverHideTimer); this.dropHoverHideTimer = -1; }
-    if (visible && isSameChatMessageDragExtra(extraParams, getActiveTdAccountSlot(), this.chatId)) {
+    // extraParams 在系统起拖路径上可能拿不到，所以同时看进程内的拖拽标记。
+    if (visible && (isMessageDragExtra(extraParams) || isMessageDragActive())) {
       visible = false;
     }
     if (visible && this.dropHover.sendMode !== sendMode) { this.dropHover.sendMode = sendMode; }
@@ -7385,7 +7391,7 @@ export struct ChatPage {
           onQueryChange: (v: string): void => { this.search.updateQuery(v); },
           onSubmit: (): void => { this.search.run(0, 0); }
         });
-      } else if (this.selection.active) {
+      } else if (this.selection.active || this.selection.previewActive()) {
         this.selectionBar(true);
       } else {
         ChatHeader({
@@ -7744,6 +7750,12 @@ export struct ChatPage {
     // 悬停提示：拖拽进入页面就亮出「松手即发送」，离开或松手收起。onDragEnter
     // 只在组件上已有 onDrop 时才会回调。
     .onDragEnter((event: DragEvent, extraParams?: string): void => {
+      // 应用内消息拖拽：不读 event.getData()，否则会触发延迟数据加载，
+      // 拖拽会话要等 TDLib 超时才收尾（用户看到的松手后延迟两三秒）。
+      if (isMessageDragExtra(extraParams) || isMessageDragActive()) {
+        this.setDropHover(false);
+        return;
+      }
       this.setDropHover(this.dropHoverAllowed(), extraParams, this.dropSendsDirectly(event));
     })
     .onDragLeave((): void => {

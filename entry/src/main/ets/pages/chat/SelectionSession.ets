@@ -74,6 +74,8 @@ export class SelectionSession {
 
   @Trace active: boolean = false;
   @Trace ids: number[] = [];
+  // 长按到抬手之间的「预览选中」：只用来亮多选栏，不改变行布局与命中。
+  @Trace previewIds: number[] = [];
   private retained: Map<number, MessageEntry> = new Map<number, MessageEntry>();
 
   // 未 bind 时的空宿主：字段类型非空，且控制器在 aboutToAppear 之前就已经被
@@ -109,6 +111,7 @@ export class SelectionSession {
   // 参数按原实现叫 memberIds（长按那一行全部成员的 id），不是单个 id：调用方
   // （长按菜单的 onSelectMessages）传的就是整行的 id 数组。
   enter(memberIds: number[]): void {
+    this.previewIds = [];
     closeContextMenu();
     this.host.closeReactionSheet();
     this.host.setEmojiPanel(false);
@@ -149,6 +152,7 @@ export class SelectionSession {
   }
 
   exit(): void {
+    this.previewIds = [];
     this.animateSelection((): void => { this.clearState(); });
   }
 
@@ -156,6 +160,7 @@ export class SelectionSession {
   // clearSelectionState）。
   private clearState(): void {
     this.ids = [];
+    this.previewIds = [];
     this.retained.clear();
     this.setActive(false);
   }
@@ -196,8 +201,18 @@ export class SelectionSession {
   }
 
   isRowSelected(g: AlbumGroup): boolean {
+    if (!this.active && this.previewIds.length > 0) {
+      return rowSelected(this.previewIds, g.memberIds);
+    }
     return rowSelected(this.ids, g.memberIds);
   }
+
+  // 长按预览：只让顶栏显示「已选择 N」，不动 active，所以列表不重排、不挡触摸。
+  previewActive(): boolean { return this.previewIds.length > 0; }
+
+  beginPreview(memberIds: number[]): void { this.previewIds = memberIds.slice(); }
+
+  cancelPreview(): void { this.previewIds = []; }
 
   // Toggle a whole display row (an album row selects all its members).
   toggleRow(g: AlbumGroup): void {
@@ -281,6 +296,6 @@ export class SelectionSession {
   }
 
   count(): number {
-    return this.ids.length;
+    return this.active ? this.ids.length : this.previewIds.length;
   }
 }

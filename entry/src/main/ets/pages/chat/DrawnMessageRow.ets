@@ -85,9 +85,9 @@ import { MessageBubbleActions, MessageBubbleRenderData } from './ReusableMessage
 import { LegacyTextRow } from './LegacyTextRow';
 import { DrawnTextLayouts } from './DrawnTextLayout';
 import { drawnTextRowEligible } from '../../util/drawnTextRowPolicy';
-import { MessageDragGesture } from '../../util/messageDragGesture';
-import { configureMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
-import { messageDragType } from '../../util/messageDrag';
+import { armMessageDrag, disarmMessageDrag, isMessageDragArmed, MessageDragGesture } from '../../util/messageDragGesture';
+import { configureMessageDrag, endMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
+import { messageDragContentReady, messageDragType } from '../../util/messageDrag';
 import { tableScrollTouched } from '../../util/tableTouchChannel';
 import { LegacyAlbumMessageBubble } from './LegacyAlbumMessageBubble';
 import { DrawnAlbumLayouts } from './DrawnAlbumLayout';
@@ -793,7 +793,17 @@ export struct DrawnMessageRow {
       if (m.senderIsUser && m.senderId > 0) { this.actions.onAvatarLongPress(m.senderId, m.senderName, f.globalY); }
       return;
     }
+    const policy = messageGesturePolicy(this.env.gestureScheme);
     if (this.canDragMessage() && this.touchOnBody) {
+      if (policy.longPressSelects && !this.rowData.selectionActive) {
+        // 单击出菜单模式：长按只亮预览，抬手才真正进多选；继续拖拽则走拖拽。
+        armMessageDrag(this.rowGroup.head.id);
+        const preview: ((ids: number[]) => void) | undefined = this.actions.onPreviewMessages;
+        if (preview !== undefined) {
+          preview(this.rowGroup.memberIds);
+          return;
+        }
+      }
       this.dragGesture.markMenuOpened();
     }
     this.invokeLongPress(x);
@@ -875,9 +885,29 @@ export struct DrawnMessageRow {
     else if (select) { this.actions.onSelectMessages(this.rowGroup.memberIds); }
   }
 
+  private dragNoticeAt: number = 0;
+
   private canDragMessage(): boolean {
-    return this.kind === 'text' && !this.rowData.selectionActive && !this.rowData.editingActive &&
-      this.rowGroup.memberIds.length === 1 && this.rowGroup.head.id > 0;
+    if ((this.rowData.selectionActive && !isMessageDragArmed(this.rowGroup.head.id)) ||
+      this.rowData.editingActive ||
+      this.rowGroup.memberIds.length !== 1 || this.rowGroup.head.id <= 0) { return false; }
+    if (messageDragType(this.rowGroup.head.contentType) === '') { return false; }
+    // 单媒体气泡（图片/视频/语音/文件）和纯文字气泡都能拖；相册是多条消息，
+    // 拖出去无法对应一条可交付内容，仍不参与。
+    return this.kind === 'text' || this.kind === 'single';
+  }
+
+  private dragContentReady(): boolean {
+    const head = this.rowGroup.head;
+    return messageDragContentReady(messageDragType(head.contentType), head.photoPath, head.photoFullPath,
+      head.videoPath);
+  }
+
+  private notifyDragNeedsDownload(): void {
+    const now = Date.now();
+    if (now - this.dragNoticeAt < 1500) { return; }
+    this.dragNoticeAt = now;
+    showToast(str('drag_download_first'), 2500);
   }
   private dragTouch(event: TouchEvent): void {
     const t = event.touches[0] ?? event.changedTouches[0], p = this.plan;
@@ -894,14 +924,23 @@ export struct DrawnMessageRow {
     const now = Date.now();
     const stale = this.touchRowId !== this.rowGroup.head.rowId || this.touchChatId !== this.rowData.chatId;
     if (event.type === TouchType.Move && t !== undefined) {
-      if (this.dragGesture.shouldStartTouchDrag(t.windowX, t.windowY, now) && !stale &&
-        (!this.claimed || this.dragGesture.hasOpenedMenu()) && !tableScrollTouched()) {
+      const wantsDrag: boolean = this.dragGesture.shouldStartTouchDrag(t.windowX, t.windowY, now);
+      if (wantsDrag && !this.dragContentReady()) {
+        // 手指已经做出拖拽动作但文件没下载：明确提示先下载，避免拖出空内容。
+        this.dragGesture.reset();
+        this.notifyDragNeedsDownload();
+        return;
+      }
+      if (wantsDrag && !stale &&
+        (!this.claimed || this.dragGesture.hasOpenedMenu() || isMessageDragArmed(this.rowGroup.head.id)) && !tableScrollTouched()) {
         this.dragGesture.claim();
         if (startMessageTouchDrag(this.getUIContext(), t.id ?? 0, this.rowData.chatId, this.rowGroup.head.id,
           messageDragType(this.rowGroup.head.contentType), this.deleteNodeKey,
-          (): void => { this.draggingMessage = false; })) {
+          (): void => { this.draggingMessage = false; }, this.rowGroup.head.text !== '', this.rowGroup.head.text)) {
           this.draggingMessage = true; this.claimed = true;
           this.menuShown = false; this.touchLink = null; this.foreground.press(null);
+          const cancelSelection: (() => void) | undefined = this.actions.onCancelSelection;
+          if (cancelSelection !== undefined) { cancelSelection(); }
           return;
         }
       }
@@ -912,6 +951,9 @@ export struct DrawnMessageRow {
       if (this.dragGesture.end(now, event.type !== TouchType.Up || stale || this.claimed)) {
         this.invokeLongPress(t?.x ?? this.touchX);
       }
+      disarmMessageDrag(this.rowGroup.head.id);
+      const cancelPreview: (() => void) | undefined = this.actions.onCancelPreview;
+      if (cancelPreview !== undefined) { cancelPreview(); }
     }
   }
 
@@ -1385,17 +1427,18 @@ export struct DrawnMessageRow {
     .onDragStart((event: DragEvent): DragItemInfo => {
       // Reaction holds are handled before the system's 500ms drag recognizer.
       // Never export the message when the initial target was a reaction chip.
-      if (preview || !this.canDragMessage() || !this.touchOnBody ||
-        (this.claimed && !this.dragGesture.hasOpenedMenu()) ||
+      if (preview || !this.canDragMessage() || !this.touchOnBody || !this.dragContentReady() ||
+        (this.claimed && !this.dragGesture.hasOpenedMenu() && !isMessageDragArmed(this.rowGroup.head.id)) ||
         !this.dragGesture.canStartDrag() || this.touchRowId !== this.rowGroup.head.rowId ||
         this.touchChatId !== this.rowData.chatId || tableScrollTouched()) {
         event.setResult(DragResult.DRAG_CANCELED); return {};
       }
       this.dragGesture.claim(); this.draggingMessage = true; this.claimed = true;
       this.menuShown = false; this.foreground.press(null);
-      return configureMessageDrag(event, this.rowData.chatId, this.rowGroup.head.id, messageDragType(this.rowGroup.head.contentType));
+      return configureMessageDrag(event, this.rowData.chatId, this.rowGroup.head.id,
+        messageDragType(this.rowGroup.head.contentType), this.rowGroup.head.text !== '', this.rowGroup.head.text);
     })
-    .onDragEnd((): void => { this.draggingMessage = false; });
+    .onDragEnd((): void => { disarmMessageDrag(this.rowGroup.head.id); endMessageDrag(); this.draggingMessage = false; const cp: (() => void) | undefined = this.actions.onCancelPreview; if (cp !== undefined) { cp(); } });
   }
 
   build() {

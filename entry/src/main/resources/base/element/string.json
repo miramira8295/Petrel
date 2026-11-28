@@ -12210,7 +12210,7 @@
     },
     {
       "name": "drop_release_send",
-      "value": "拖拽到此处，松手即发送"
+      "value": "松手即发送内容"
     },
     {
       "name": "drop_release_to",
@@ -12219,6 +12219,10 @@
     {
       "name": "drop_release_draft",
       "value": "松手填入输入框"
+    },
+    {
+      "name": "drag_download_first",
+      "value": "请先下载再拖拽"
     },
     {
       "name": "share_to",

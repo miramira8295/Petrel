@@ -1,6 +1,7 @@
 import { showToast } from '../../util/toast';
 import { getActiveTdAccountSlot } from '../../tdkit/Globals';
-import { isSameChatMessageDrag, isSameChatMessageDragExtra } from '../../util/messageDragOrigin';
+import { isMessageDragActive, isMessageDragExtra, isSameChatMessageDrag } from '../../util/messageDragOrigin';
+import { endMessageDrag } from '../../services/MessageDragSource';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { logI, logE } from '../../util/log';
 import { common } from '@kit.AbilityKit';
@@ -36,7 +37,11 @@ export class ChatDropReceiver {
   receive(event: DragEvent, context: common.Context, ui: UIContext, host: ShareArrivalHost,
     active: () => boolean, target: string, chatId: number, extraParams?: string): void {
     const account: string = getActiveTdAccountSlot();
-    if (isSameChatMessageDragExtra(extraParams, account, chatId)) {
+    // 从聊天消息拖出来的内容：不论落在哪个会话，聊天页一律不接收——不发送、也不填草稿。
+    // 目标是中转站/小艺/其他应用，聊天页只是拖拽起点；extraParams 在系统起拖路径可能缺失，
+    // 因此同时看进程内标记。
+    if (isMessageDragExtra(extraParams) || isMessageDragActive()) {
+      endMessageDrag();
       event.setResult(DragResult.DRAG_CANCELED);
       return;
     }

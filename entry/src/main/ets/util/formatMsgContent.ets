@@ -882,6 +882,8 @@ export function formatMsgContent(message: TdObject, previousChecklist?: Checklis
     const voiceFile = vn !== undefined ? (vn['voice'] as TdObject | undefined) : undefined;
     const voiceSize = voiceFile !== undefined
       ? (((voiceFile['size'] as number | undefined) ?? 0) || ((voiceFile['expected_size'] as number | undefined) ?? 0)) : 0;
+    // 拖拽预检需要知道语音是否已落盘；与视频/音频共用同一条本地路径字段。
+    const voiceState: LocalFileState = localFileState(voiceFile);
     return {
       contentType: 'voice',
       text: captionText(content!),
@@ -895,6 +897,7 @@ export function formatMsgContent(message: TdObject, previousChecklist?: Checklis
       videoMimeType: vn !== undefined ? ((vn['mime_type'] as string | undefined) ?? '') : '',
       videoFileName: '',
       photoFullFileId: 0,
+      videoLocalPath: voiceState.path,
       voiceWaveform: vn !== undefined ? ((vn['waveform'] as string | undefined) ?? '') : '',
       voiceListened: (content!['is_listened'] as boolean | undefined) ?? false,
       speechState: speechStateOf(vn),

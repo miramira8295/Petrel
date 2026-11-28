@@ -11,6 +11,7 @@ import { MessageRowHost } from './MessageRowHost';
 import { MessageBubbleActions } from './ReusableMessageBubble';
 import { stackFromEndWanted } from '../../util/stackFromEnd';
 import { MESSAGE_SELECTION_GUTTER_VP, rowSelectable } from '../../util/messageSelection';
+import { isMessageDragArmed } from '../../util/messageDragGesture';
 import { AlbumGroup } from '../../util/collapseAlbums';
 import { COLOR_PRIMARY } from '../../util/theme';
 import { str } from '../../util/strings';
@@ -336,7 +337,8 @@ export struct ChatTimelineHost {
           // toggleRow 上——用户看到的就是"取消一张，整组全没了"。
           // 格子上只有 onClick（拖动不会触发），所以放开它不影响列表拖动。
           .hitTestBehavior(this.selection.active &&
-            rowSelectable(ri.item.head.contentType) && ri.item.memberIds.length <= 1
+            rowSelectable(ri.item.head.contentType) && ri.item.memberIds.length <= 1 &&
+            !isMessageDragArmed(ri.item.head.id)
             ? HitTestMode.BLOCK_DESCENDANTS : HitTestMode.Default);
         }
         .width('100%')

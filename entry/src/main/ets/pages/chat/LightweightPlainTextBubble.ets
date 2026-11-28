@@ -11,8 +11,8 @@ import { senderLabelWidths } from '../../util/senderLabelWidths';
 import { BubbleGlassGeometry } from './BubbleGlassGeometry';
 import { DissolveDeleteEffect } from '../common/DissolveDeleteEffect';
 import { RowLeaveChannel } from '../../util/rowLeaveChannel';
-import { MESSAGE_HOLD_MENU_MS, MessageDragGesture } from '../../util/messageDragGesture';
-import { configureMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
+import { armMessageDrag, disarmMessageDrag, isMessageDragArmed, MESSAGE_HOLD_MENU_MS, MessageDragGesture } from '../../util/messageDragGesture';
+import { configureMessageDrag, endMessageDrag, startMessageTouchDrag } from '../../services/MessageDragSource';
 import { messageDragType } from '../../util/messageDrag';
 import { JUMP_FOCUS_BRIGHTNESS, JUMP_FOCUS_SCALE } from '../../util/bubbleFocusChannel';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
@@ -111,6 +111,9 @@ export interface LightweightPlainTextActions {
   onViewSenderHistory: (senderId: number) => void;
   onReportMsg: (messageId: number) => void;
   onSelectMessages: (messageIds: number[]) => void;
+  onCancelSelection?: () => void;
+  onPreviewMessages?: (messageIds: number[]) => void;
+  onCancelPreview?: () => void;
   onDeleteMsg: (messageId: number) => void;
   onOpenReactions: (messageId: number) => void;
   onRetryTranslation: (messageId: number) => void;
@@ -905,19 +908,24 @@ export struct LightweightPlainTextBubble {
       this.dragGesture.end(now, true);
     } else if (event.type === TouchType.Move && touch !== undefined) {
       if (this.dragGesture.shouldStartTouchDrag(touch.windowX, touch.windowY, now) &&
-        (!this.gestureClaimed || this.dragGesture.hasOpenedMenu())) {
+        (!this.gestureClaimed || this.dragGesture.hasOpenedMenu() || isMessageDragArmed(this.msg.id))) {
         this.dragGesture.claim();
         if (startMessageTouchDrag(this.getUIContext(), touch.id ?? 0, this.chatId, this.msg.id,
           messageDragType(this.msg.contentType), `dissolve-delete-message-${this.chatId}-${this.msg.rowId}`,
-          (): void => { this.draggingMessage = false; })) {
+          (): void => { this.draggingMessage = false; }, false, this.msg.text)) {
           this.draggingMessage = true;
           this.gestureClaimed = true;
           this.menuShown = false;
+          const cancelSelection: (() => void) | undefined = this.actions.onCancelSelection;
+          if (cancelSelection !== undefined) { cancelSelection(); }
         }
       }
     } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       if (touch !== undefined) { this.dragGesture.move(touch.windowX, touch.windowY, now); }
       if (this.dragGesture.end(now, event.type === TouchType.Cancel)) { this.onLongPress(); }
+      disarmMessageDrag(this.msg.id);
+      const cancelPreview: (() => void) | undefined = this.actions.onCancelPreview;
+      if (cancelPreview !== undefined) { cancelPreview(); }
     }
   }
 
@@ -941,6 +949,13 @@ export struct LightweightPlainTextBubble {
     if (policy.longPressOpensMenu) {
       this.menuShown = true;
     } else if (policy.longPressSelects) {
+      // 单击出菜单模式：长按只亮预览，抬手才真正进多选；继续拖拽则走拖拽。
+      if (this.canDragMessage()) { armMessageDrag(this.msg.id); }
+      const preview: ((ids: number[]) => void) | undefined = this.actions.onPreviewMessages;
+      if (this.canDragMessage() && preview !== undefined) {
+        preview(this.memberIds);
+        return;
+      }
       this.actions.onSelectMessages(this.memberIds);
     }
   }
@@ -1453,16 +1468,16 @@ export struct LightweightPlainTextBubble {
         .dragPreviewOptions({}, { isLiftingDisabled: true })
         .onDragStart((event: DragEvent): DragItemInfo => {
           if (!this.canDragMessage() || !this.dragGesture.canStartDrag() ||
-            (this.gestureClaimed && !this.dragGesture.hasOpenedMenu())) {
+            (this.gestureClaimed && !this.dragGesture.hasOpenedMenu() && !isMessageDragArmed(this.msg.id))) {
             event.setResult(DragResult.DRAG_CANCELED); return {};
           }
           this.dragGesture.claim();
           this.draggingMessage = true;
           this.gestureClaimed = true;
           this.menuShown = false;
-          return configureMessageDrag(event, this.chatId, this.msg.id, messageDragType(this.msg.contentType));
+          return configureMessageDrag(event, this.chatId, this.msg.id, messageDragType(this.msg.contentType), false, this.msg.text);
         })
-        .onDragEnd((): void => { this.draggingMessage = false; })
+        .onDragEnd((): void => { disarmMessageDrag(this.msg.id); endMessageDrag(); this.draggingMessage = false; const cp: (() => void) | undefined = this.actions.onCancelPreview; if (cp !== undefined) { cp(); } })
         .bindContextMenu(this.menuShown, this.contextMenu(), {
           offset: { x: this.menuOffsetX, y: 0 },
           preview: (this.menuShown && menuPreviewCompact(this.env.keyboardHeightVp, this.env.screenHeightVp))
